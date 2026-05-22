@@ -1,0 +1,1093 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Ribo-Rumble</title>
+<style>
+  :root {
+    --bg: #0e1116;
+    --panel: #161b22;
+    --panel-2: #1d242d;
+    --border: #2a3340;
+    --text: #e6edf3;
+    --muted: #8b98a5;
+    --accent: #58a6ff;
+    --good: #3fb950;
+    --bad: #f85149;
+    --warn: #d29922;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+  header {
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--panel);
+  }
+  header h1 { margin: 0; font-size: 20px; letter-spacing: 0.5px; }
+  header .meta { color: var(--muted); font-size: 13px; }
+  main { padding: 20px; max-width: 1400px; margin: 0 auto; }
+  .screen { display: none; }
+  .screen.active { display: block; }
+
+  /* Forms */
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 24px;
+    max-width: 480px;
+    margin: 40px auto;
+  }
+  .card h2 { margin-top: 0; }
+  label { display: block; margin: 12px 0 4px; font-size: 13px; color: var(--muted); }
+  input, textarea, select, button {
+    font: inherit;
+    color: var(--text);
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    width: 100%;
+  }
+  textarea { resize: vertical; min-height: 80px; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+  button {
+    background: var(--accent);
+    color: #051018;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+    margin-top: 12px;
+  }
+  button:hover { filter: brightness(1.1); }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  button.secondary { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); }
+  button.danger { background: var(--bad); color: white; }
+  button.good { background: var(--good); color: #051a07; }
+  .row { display: flex; gap: 8px; }
+  .row > * { flex: 1; }
+  .toggle { display: flex; gap: 8px; margin-bottom: 20px; }
+  .toggle button { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); }
+  .toggle button.active { background: var(--accent); color: #051018; border-color: var(--accent); }
+
+  /* Lobby */
+  .player-list { list-style: none; padding: 0; }
+  .player-list li {
+    padding: 10px 14px;
+    background: var(--panel-2);
+    border-radius: 6px;
+    margin-bottom: 6px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .player-list .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--muted); display: inline-block; margin-right: 8px;
+  }
+  .player-list .dot.on { background: var(--good); }
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    background: var(--panel);
+    color: var(--muted);
+    border: 1px solid var(--border);
+  }
+  .badge.you { background: var(--accent); color: #051018; border-color: var(--accent); }
+  .badge.host { background: var(--warn); color: #1a1206; border-color: var(--warn); }
+  .share-link {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px;
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 12px;
+    word-break: break-all;
+    margin-top: 8px;
+  }
+
+  /* In-game two-column */
+  .game-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+  @media (max-width: 800px) {
+    .game-grid { grid-template-columns: 1fr; }
+  }
+  .column {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  .column header {
+    background: transparent;
+    border-bottom: 1px solid var(--border);
+    padding: 14px 16px;
+  }
+  .column header h3 { margin: 0; font-size: 15px; }
+  .column .body { padding: 12px 16px; flex: 1; overflow-y: auto; max-height: 70vh; }
+  .req-item {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px;
+    margin-bottom: 10px;
+  }
+  .req-item .name {
+    font-weight: 600;
+    font-size: 14px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+  }
+  .req-item .meta {
+    color: var(--muted);
+    font-size: 12px;
+    margin-top: 4px;
+  }
+  .req-item .dna {
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 13px;
+    background: var(--panel);
+    border-radius: 4px;
+    padding: 6px 8px;
+    margin-top: 8px;
+    color: #c9d1d9;
+    word-break: break-all;
+  }
+  .req-item .peptide {
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 13px;
+    background: var(--panel);
+    border-radius: 4px;
+    padding: 6px 8px;
+    margin-top: 8px;
+    color: #c9d1d9;
+  }
+  .req-item .actions { margin-top: 8px; display: flex; gap: 6px; }
+  .req-item .actions button { width: auto; padding: 6px 12px; margin: 0; font-size: 13px; }
+  .state-pill {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--muted);
+  }
+  .state-pill.pending { background: #3a2c00; color: var(--warn); border-color: var(--warn); }
+  .state-pill.confirmed { background: #0f3a1d; color: var(--good); border-color: var(--good); }
+  .state-pill.rejected { background: #3a0f10; color: var(--bad); border-color: var(--bad); }
+  .empty { color: var(--muted); font-style: italic; text-align: center; padding: 20px; }
+
+  /* Modals */
+  .modal-bg {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.6);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 10;
+  }
+  .modal-bg.active { display: flex; }
+  .modal {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 24px;
+    max-width: 480px;
+    width: calc(100% - 40px);
+  }
+  .modal h3 { margin-top: 0; }
+  .codon-table {
+    background: var(--panel-2);
+    border-radius: 6px;
+    padding: 10px;
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .codon-table span { display: inline-block; margin-right: 14px; }
+
+  /* End game */
+  .scoreboard { list-style: none; padding: 0; max-width: 600px; margin: 20px auto; }
+  .scoreboard li {
+    display: flex;
+    justify-content: space-between;
+    padding: 14px 18px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin-bottom: 6px;
+    font-size: 16px;
+  }
+  .scoreboard li.gold { border-color: #d4af37; background: #2d2510; }
+  .scoreboard li.silver { border-color: #8a8a8a; }
+  .scoreboard li.bronze { border-color: #7d4d2d; }
+  .scoreboard .pts { font-weight: 700; }
+  .reveal-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 20px;
+    font-size: 13px;
+  }
+  .reveal-table th, .reveal-table td {
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+  }
+  .reveal-table th { color: var(--muted); font-weight: 500; }
+  .reveal-table .ok { color: var(--good); }
+  .reveal-table .no { color: var(--bad); }
+
+  .toast {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 10px 18px;
+    border-radius: 6px;
+    z-index: 50;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    opacity: 0;
+    transition: opacity 0.2s;
+    pointer-events: none;
+  }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🧬 Ribo-Rumble</h1>
+  <div class="meta" id="header-meta"></div>
+</header>
+
+<main>
+  <!-- Landing screen -->
+  <section class="screen active" id="screen-landing">
+    <div class="card">
+      <h2>Welcome</h2>
+      <div class="toggle">
+        <button id="tab-create" class="active">Create game</button>
+        <button id="tab-join">Join game</button>
+      </div>
+
+      <div id="create-form">
+        <label>Your name</label>
+        <input id="host-name" placeholder="Alice" autocomplete="off" />
+        <label>Number of players</label>
+        <input id="expected-players" type="number" min="2" max="20" value="3" />
+        <label>End window (minutes): random somewhere between</label>
+        <div class="row">
+          <input id="end-min" type="number" min="0.5" step="0.5" value="15" />
+          <input id="end-max" type="number" min="0.5" step="0.5" value="25" />
+        </div>
+        <label>Mode</label>
+        <div class="toggle" style="margin-bottom:8px">
+          <button type="button" id="mode-solo" class="active">Solo (free-for-all)</button>
+          <button type="button" id="mode-teams">Teams</button>
+        </div>
+        <div id="team-config" style="display:none">
+          <label>Teams (comma-separated names)</label>
+          <input id="team-names" value="Red, Blue" autocomplete="off" />
+          <p style="color:var(--muted); font-size:12px; margin-top:4px">
+            Two teams → 2 colors auto-assigned. More teams → more colors.
+          </p>
+        </div>
+        <button id="btn-create">Create</button>
+      </div>
+
+      <div id="join-form" style="display:none">
+        <label>Your name</label>
+        <input id="join-name" placeholder="Bob" autocomplete="off" />
+        <label>Game ID (from the host)</label>
+        <input id="join-game-id" placeholder="g_xxxxxx" autocomplete="off" />
+        <button id="btn-join">Join</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Lobby screen -->
+  <section class="screen" id="screen-lobby">
+    <div class="card">
+      <h2>Lobby</h2>
+      <p style="color:var(--muted)">Share this link with players on the same network:</p>
+      <div class="share-link" id="share-link"></div>
+      <button class="secondary" id="btn-copy-link" style="margin-top:8px">Copy link</button>
+
+      <label style="margin-top:24px">Players <span id="lobby-count" style="color:var(--muted)"></span></label>
+      <ul class="player-list" id="lobby-players"></ul>
+
+      <div id="lobby-team-picker" style="display:none">
+        <label>Your team</label>
+        <select id="my-team-select"></select>
+      </div>
+
+      <label>Codon table (give this on paper to everyone)</label>
+      <div class="codon-table" id="codon-table-display"></div>
+
+      <button id="btn-start" style="display:none">Start game</button>
+      <p id="lobby-status" style="color:var(--muted); text-align:center; margin-top:12px"></p>
+    </div>
+  </section>
+
+  <!-- In-game screen -->
+  <section class="screen" id="screen-game">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+      <div>
+        <button id="btn-new-request">+ New request (you are the requester)</button>
+      </div>
+      <div style="color:var(--muted); font-size:13px;">
+        Codon table: <span id="codon-table-inline"></span>
+      </div>
+    </div>
+    <div class="game-grid">
+      <div class="column">
+        <header><h3>📤 Sent requests <span style="color:var(--muted); font-size:12px;">(your DNAs)</span></h3></header>
+        <div class="body" id="outgoing-list"></div>
+      </div>
+      <div class="column">
+        <header><h3>📥 Received requests <span style="color:var(--muted); font-size:12px;">(decrypt from paper)</span></h3></header>
+        <div class="body" id="incoming-list"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- End game screen -->
+  <section class="screen" id="screen-end">
+    <div style="text-align:center">
+      <h2>🎉 Game over</h2>
+      <p style="color:var(--muted)">Time's up. Here are the results.</p>
+    </div>
+    <ul class="scoreboard" id="scoreboard"></ul>
+    <div style="max-width:1100px; margin:30px auto;">
+      <h3>All requests, revealed</h3>
+      <table class="reveal-table">
+        <thead><tr>
+          <th>Protein</th>
+          <th>Requester</th>
+          <th>Decrypter</th>
+          <th>DNA</th>
+          <th>Truth</th>
+          <th>Submitted</th>
+          <th>Valid?</th>
+          <th>Outcome</th>
+        </tr></thead>
+        <tbody id="reveal-rows"></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<!-- New request modal -->
+<div class="modal-bg" id="modal-new">
+  <div class="modal">
+    <h3>New request</h3>
+    <label>Protein name</label>
+    <input id="new-protein-name" autocomplete="off" />
+    <label>DNA sequence</label>
+    <textarea id="new-dna" placeholder="ATG GTT TTT GAA TAA"></textarea>
+    <label id="new-decrypter-label">Send to</label>
+    <select id="new-decrypter"></select>
+    <div class="row" style="margin-top:16px">
+      <button class="secondary" id="cancel-new">Cancel</button>
+      <button id="confirm-new">Send</button>
+    </div>
+    <p style="color:var(--muted); font-size:12px; margin-top:12px">
+      Remember: hand the paper with "<em>Protein - DNA</em>" to the decrypter physically.
+    </p>
+  </div>
+</div>
+
+<!-- Submit decryption modal -->
+<div class="modal-bg" id="modal-decrypt">
+  <div class="modal">
+    <h3>Decrypt: <span id="decrypt-protein"></span></h3>
+    <p style="color:var(--muted); font-size:13px;">
+      Read the DNA from the paper. Submit your guessed polypeptide below.
+    </p>
+    <label>Peptide guess</label>
+    <input id="peptide-guess" placeholder="Met-Val-Phe-Glu-Stop" autocomplete="off" />
+    <p style="color:var(--muted); font-size:12px;">
+      Accepted: three-letter codes, one-letter codes, * or Stop. Separators: hyphens, spaces, commas.
+    </p>
+    <div class="row" style="margin-top:16px">
+      <button class="secondary" id="cancel-decrypt">Cancel</button>
+      <button id="confirm-decrypt">Submit</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+//======================================================================
+// Client-side state
+//======================================================================
+const state = {
+  gameId: null,
+  playerId: null,
+  hostPlayerId: null,
+  expectedPlayers: 0,
+  codonTable: {},
+  players: [],
+  teams: [],
+  mode: 'solo',
+  outgoing: [],
+  incoming: [],
+  phase: 'landing',
+  ws: null,
+  reconnectTimer: null,
+  decryptingRequestId: null,
+};
+
+//======================================================================
+// Utilities
+//======================================================================
+function $(id) { return document.getElementById(id); }
+function showScreen(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  $(id).classList.add('active');
+}
+function toast(msg, color) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.style.borderColor = color || 'var(--border)';
+  t.classList.add('show');
+  clearTimeout(t._t);
+  t._t = setTimeout(() => t.classList.remove('show'), 3000);
+}
+function playerName(pid) {
+  const p = state.players.find(p => p.id === pid);
+  return p ? p.name : '???';
+}
+function shareUrl() {
+  return `${location.origin}/?game=${state.gameId}`;
+}
+
+//======================================================================
+// API
+//======================================================================
+async function api(path, body, method='POST') {
+  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(path, opts);
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(e.detail || 'Request failed');
+  }
+  return r.json();
+}
+
+//======================================================================
+// WebSocket
+//======================================================================
+function connectWs() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const url = `${proto}://${location.host}/ws/${state.gameId}?player_id=${state.playerId}`;
+  state.ws = new WebSocket(url);
+  state.ws.onopen = () => { /* server sends snapshot on connect */ };
+  state.ws.onmessage = ev => {
+    try {
+      const msg = JSON.parse(ev.data);
+      handleServerMessage(msg);
+    } catch (e) {
+      console.error('Bad WS message', e);
+    }
+  };
+  state.ws.onclose = () => {
+    state.ws = null;
+    if (state.phase !== 'ended' && state.gameId && state.playerId) {
+      toast('Disconnected, reconnecting…', 'var(--warn)');
+      state.reconnectTimer = setTimeout(connectWs, 1500);
+    }
+  };
+  state.ws.onerror = () => { /* close handler will retry */ };
+}
+
+function send(msg) {
+  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+    state.ws.send(JSON.stringify(msg));
+  } else {
+    toast('Not connected', 'var(--bad)');
+  }
+}
+
+function handleServerMessage(msg) {
+  switch (msg.type) {
+    case 'state_sync':
+      state.phase = msg.phase;
+      state.players = msg.players;
+      state.teams = msg.teams || [];
+      state.mode = msg.mode || 'solo';
+      state.expectedPlayers = msg.expected_players;
+      state.hostPlayerId = msg.host_player_id;
+      state.codonTable = msg.codon_table;
+      state.outgoing = msg.outgoing || [];
+      state.incoming = msg.incoming || [];
+      renderAll();
+      break;
+    case 'lobby_update':
+      state.phase = msg.phase;
+      state.players = msg.players;
+      state.teams = msg.teams || state.teams;
+      state.mode = msg.mode || state.mode;
+      state.expectedPlayers = msg.expected_players;
+      state.hostPlayerId = msg.host_player_id;
+      renderLobby();
+      if (state.phase === 'lobby') showScreen('screen-lobby');
+      break;
+    case 'game_started':
+      state.phase = 'in_progress';
+      showScreen('screen-game');
+      toast('Game started! Clock is ticking…', 'var(--good)');
+      renderAll();
+      break;
+    case 'outgoing_update':
+      upsert(state.outgoing, msg.request);
+      renderOutgoing();
+      break;
+    case 'incoming_update':
+      const wasNew = !state.incoming.find(x => x.id === msg.request.id);
+      upsert(state.incoming, msg.request);
+      renderIncoming();
+      if (wasNew && msg.request.state === 'awaiting_decryption') {
+        toast(`New request from ${playerName(msg.request.requester_id)}: ${msg.request.protein_name}`, 'var(--accent)');
+      }
+      break;
+    case 'decision_made':
+      upsert(state.incoming, msg.request);
+      renderIncoming();
+      const verb = msg.decision === 'confirmed' ? '✅ confirmed' : '❌ rejected';
+      const who = state.mode === 'teams' && msg.request.resolved_by_id
+        ? playerName(msg.request.resolved_by_id)
+        : playerName(msg.request.requester_id);
+      toast(`${who} ${verb} the decryption of ${msg.request.protein_name}`,
+            msg.decision === 'confirmed' ? 'var(--good)' : 'var(--bad)');
+      break;
+    case 'game_ended':
+      state.phase = 'ended';
+      renderEnd(msg);
+      showScreen('screen-end');
+      break;
+    case 'error':
+      toast('Error: ' + msg.message, 'var(--bad)');
+      break;
+  }
+}
+
+function upsert(list, item) {
+  const i = list.findIndex(x => x.id === item.id);
+  if (i >= 0) list[i] = item;
+  else list.unshift(item);
+}
+
+//======================================================================
+// Rendering
+//======================================================================
+function renderAll() {
+  let metaText = '';
+  if (state.gameId) {
+    metaText = `Game ${state.gameId} · You: ${playerName(state.playerId)}`;
+    if (state.mode === 'teams') {
+      const t = teamById(myTeamId());
+      if (t) metaText += ` · Team ${t.name}`;
+    }
+  }
+  $('header-meta').textContent = metaText;
+  if (state.phase === 'lobby') {
+    renderLobby();
+    showScreen('screen-lobby');
+  } else if (state.phase === 'in_progress') {
+    renderGame();
+    showScreen('screen-game');
+  } else if (state.phase === 'ended') {
+    // game_ended event will render
+  }
+}
+
+function teamById(tid) { return state.teams.find(t => t.id === tid); }
+function teamBadge(tid) {
+  const t = teamById(tid);
+  if (!t) return '';
+  return `<span class="badge" style="background:${t.color};color:#000;border-color:${t.color}">${escapeHtml(t.name)}</span>`;
+}
+function myTeamId() {
+  const me = state.players.find(p => p.id === state.playerId);
+  return me ? me.team_id : null;
+}
+
+function renderLobby() {
+  $('share-link').textContent = shareUrl();
+  $('lobby-count').textContent = `(${state.players.length} / ${state.expectedPlayers})`;
+  const ul = $('lobby-players');
+  ul.innerHTML = '';
+  for (const p of state.players) {
+    const li = document.createElement('li');
+    const left = document.createElement('span');
+    left.innerHTML = `<span class="dot ${p.connected ? 'on' : ''}"></span>${escapeHtml(p.name)}`;
+    const right = document.createElement('span');
+    if (state.mode === 'teams' && p.team_id) right.innerHTML += teamBadge(p.team_id) + ' ';
+    if (p.id === state.playerId) right.innerHTML += '<span class="badge you">you</span> ';
+    if (p.id === state.hostPlayerId) right.innerHTML += '<span class="badge host">host</span>';
+    li.appendChild(left);
+    li.appendChild(right);
+    ul.appendChild(li);
+  }
+  // Team picker (only in team mode)
+  if (state.mode === 'teams') {
+    $('lobby-team-picker').style.display = 'block';
+    const sel = $('my-team-select');
+    const current = myTeamId();
+    sel.innerHTML = '<option value="">— pick a team —</option>';
+    for (const t of state.teams) {
+      const opt = document.createElement('option');
+      opt.value = t.id;
+      opt.textContent = t.name;
+      if (t.id === current) opt.selected = true;
+      sel.appendChild(opt);
+    }
+  } else {
+    $('lobby-team-picker').style.display = 'none';
+  }
+  // Codon table display
+  const ct = $('codon-table-display');
+  ct.innerHTML = '';
+  for (const [codon, aa] of Object.entries(state.codonTable)) {
+    const span = document.createElement('span');
+    span.textContent = `${codon}→${aa}`;
+    ct.appendChild(span);
+  }
+  // Start button visibility & readiness
+  const isHost = state.playerId === state.hostPlayerId;
+  let ready = state.players.length >= state.expectedPlayers;
+  let waitingMsg = ready ? '' : 'Waiting for all players to join.';
+  if (ready && state.mode === 'teams') {
+    const unassigned = state.players.filter(p => !p.team_id);
+    const perTeam = {};
+    for (const t of state.teams) perTeam[t.id] = 0;
+    for (const p of state.players) if (p.team_id) perTeam[p.team_id] = (perTeam[p.team_id] || 0) + 1;
+    const emptyTeams = state.teams.filter(t => !perTeam[t.id]);
+    if (unassigned.length) {
+      ready = false;
+      waitingMsg = `${unassigned.length} player(s) haven't picked a team.`;
+    } else if (emptyTeams.length) {
+      ready = false;
+      waitingMsg = `Empty team(s): ${emptyTeams.map(t => t.name).join(', ')}.`;
+    }
+  }
+  const btn = $('btn-start');
+  btn.style.display = isHost ? 'block' : 'none';
+  btn.disabled = !ready;
+  btn.textContent = ready ? 'Start game' : `Waiting (${state.players.length}/${state.expectedPlayers})`;
+  $('lobby-status').textContent = isHost
+    ? waitingMsg
+    : (ready ? 'Waiting for host to start.' : waitingMsg);
+}
+
+function renderGame() {
+  renderOutgoing();
+  renderIncoming();
+  // "Send to" dropdown: in team mode → opposing teams; in solo → other players
+  const sel = $('new-decrypter');
+  sel.innerHTML = '';
+  if (state.mode === 'teams') {
+    const mine = myTeamId();
+    for (const t of state.teams) {
+      if (t.id === mine) continue;
+      const opt = document.createElement('option');
+      opt.value = 'team:' + t.id;
+      opt.textContent = 'Team ' + t.name;
+      sel.appendChild(opt);
+    }
+    $('new-decrypter-label').textContent = 'Send to team';
+  } else {
+    for (const p of state.players) {
+      if (p.id === state.playerId) continue;
+      const opt = document.createElement('option');
+      opt.value = 'player:' + p.id;
+      opt.textContent = p.name;
+      sel.appendChild(opt);
+    }
+    $('new-decrypter-label').textContent = 'Send to';
+  }
+  // Inline codon table
+  $('codon-table-inline').textContent = Object.entries(state.codonTable)
+    .map(([c, a]) => `${c}→${a}`).join('  ');
+}
+
+function statePill(s) {
+  const labels = {
+    awaiting_decryption: { label: 'Awaiting decryption', cls: '' },
+    pending_approval: { label: 'Pending approval', cls: 'pending' },
+    confirmed: { label: 'Confirmed', cls: 'confirmed' },
+    rejected: { label: 'Rejected', cls: 'rejected' },
+  };
+  const x = labels[s] || { label: s, cls: '' };
+  return `<span class="state-pill ${x.cls}">${x.label}</span>`;
+}
+
+function renderOutgoing() {
+  const el = $('outgoing-list');
+  if (!state.outgoing.length) {
+    el.innerHTML = '<div class="empty">No requests sent yet.</div>';
+    return;
+  }
+  el.innerHTML = '';
+  // Sort: pending_approval first (action needed), then awaiting, then resolved
+  const order = { pending_approval: 0, awaiting_decryption: 1, confirmed: 2, rejected: 2 };
+  const sorted = [...state.outgoing].sort((a, b) => order[a.state] - order[b.state]);
+  for (const r of sorted) {
+    const div = document.createElement('div');
+    div.className = 'req-item';
+    let actions = '';
+    let submittedHtml = '';
+    if (r.state === 'pending_approval' && r.submitted_peptide) {
+      submittedHtml = `<div class="peptide">Their guess: ${escapeHtml(r.submitted_peptide)}</div>`;
+      actions = `
+        <div class="actions">
+          <button class="good" onclick="confirmReq('${r.id}')">✓ Confirm</button>
+          <button class="danger" onclick="rejectReq('${r.id}')">✗ Reject</button>
+        </div>`;
+    }
+    // Destination label: team name in team mode, player name in solo
+    const destLabel = state.mode === 'teams'
+      ? (teamById(r.decrypter_team_id)?.name ? 'Team ' + teamById(r.decrypter_team_id).name : '???')
+      : playerName(r.decrypter_id);
+    // Audit byline (team mode only): who initiated, who decrypted, who resolved
+    let auditHtml = '';
+    if (state.mode === 'teams') {
+      const initiated = playerName(r.requester_id);
+      const parts = [`Sent by ${escapeHtml(initiated)}`];
+      if (r.submitted_by_id) parts.push(`their team: ${escapeHtml(playerName(r.submitted_by_id))} decrypted`);
+      if (r.resolved_by_id) parts.push(`${escapeHtml(playerName(r.resolved_by_id))} resolved`);
+      auditHtml = `<div class="meta">${parts.join(' · ')}</div>`;
+    }
+    div.innerHTML = `
+      <div class="name">
+        <span>${escapeHtml(r.protein_name)} → ${escapeHtml(destLabel)}</span>
+        ${statePill(r.state)}
+      </div>
+      ${auditHtml}
+      <div class="dna">${escapeHtml(r.dna_sequence)}</div>
+      ${submittedHtml}
+      ${actions}
+    `;
+    el.appendChild(div);
+  }
+}
+
+function renderIncoming() {
+  const el = $('incoming-list');
+  if (!state.incoming.length) {
+    el.innerHTML = '<div class="empty">No requests received yet.</div>';
+    return;
+  }
+  el.innerHTML = '';
+  const order = { awaiting_decryption: 0, pending_approval: 1, confirmed: 2, rejected: 2 };
+  const sorted = [...state.incoming].sort((a, b) => order[a.state] - order[b.state]);
+  for (const r of sorted) {
+    const div = document.createElement('div');
+    div.className = 'req-item';
+    let action = '';
+    let submittedHtml = '';
+    if (r.state === 'awaiting_decryption') {
+      action = `
+        <div class="actions">
+          <button onclick="openDecrypt('${r.id}', '${escapeAttr(r.protein_name)}')">Submit decryption</button>
+        </div>`;
+    } else if (r.submitted_peptide) {
+      submittedHtml = `<div class="peptide">You submitted: ${escapeHtml(r.submitted_peptide)}</div>`;
+    }
+    // Source label and audit
+    const srcLabel = state.mode === 'teams'
+      ? `Team ${teamById(r.requester_team_id)?.name ?? '???'}`
+      : playerName(r.requester_id);
+    let auditHtml = '<div class="meta">DNA is on the paper they gave you.</div>';
+    if (state.mode === 'teams') {
+      const parts = [`Initiated by ${escapeHtml(playerName(r.requester_id))}`];
+      if (r.submitted_by_id) {
+        const submitter = playerName(r.submitted_by_id);
+        const youDid = r.submitted_by_id === state.playerId;
+        parts.push(youDid ? 'you submitted' : `${escapeHtml(submitter)} submitted`);
+      }
+      auditHtml = `<div class="meta">${parts.join(' · ')}</div>`;
+    }
+    // Submitted-by display in team mode shouldn't say "You submitted" if a teammate did it
+    if (r.submitted_peptide && state.mode === 'teams' && r.submitted_by_id !== state.playerId) {
+      submittedHtml = `<div class="peptide">${escapeHtml(playerName(r.submitted_by_id))} submitted: ${escapeHtml(r.submitted_peptide)}</div>`;
+    }
+    div.innerHTML = `
+      <div class="name">
+        <span>${escapeHtml(r.protein_name)} ← ${escapeHtml(srcLabel)}</span>
+        ${statePill(r.state)}
+      </div>
+      ${auditHtml}
+      ${submittedHtml}
+      ${action}
+    `;
+    el.appendChild(div);
+  }
+}
+
+function renderEnd(msg) {
+  const sb = $('scoreboard');
+  sb.innerHTML = '';
+  const mode = msg.mode || state.mode || 'solo';
+
+  if (mode === 'teams') {
+    // Team scoreboard first, big and colored
+    const heading = document.createElement('h3');
+    heading.textContent = 'Team scores';
+    heading.style.textAlign = 'center';
+    heading.style.marginBottom = '8px';
+    sb.appendChild(heading);
+    (msg.team_scoreboard || []).forEach((t, i) => {
+      const li = document.createElement('li');
+      if (i === 0) li.classList.add('gold');
+      else if (i === 1) li.classList.add('silver');
+      else if (i === 2) li.classList.add('bronze');
+      const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
+      li.innerHTML = `<span><span style="display:inline-block;width:12px;height:12px;border-radius:50%;background:${t.color};margin-right:8px;vertical-align:middle"></span>${medal} ${escapeHtml(t.name)}</span><span class="pts">${t.score}</span>`;
+      sb.appendChild(li);
+    });
+    // Individual mini-scoreboard below (informational only — points are team-level)
+    const subHeading = document.createElement('h4');
+    subHeading.textContent = 'Players (by team)';
+    subHeading.style.textAlign = 'center';
+    subHeading.style.color = 'var(--muted)';
+    subHeading.style.marginTop = '24px';
+    sb.appendChild(subHeading);
+    for (const t of (msg.team_scoreboard || [])) {
+      for (const p of msg.scoreboard.filter(pp => pp.team_id === t.id)) {
+        const li = document.createElement('li');
+        li.style.background = 'var(--panel)';
+        li.style.fontSize = '13px';
+        li.innerHTML = `<span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${t.color};margin-right:8px"></span>${escapeHtml(p.name)}${p.id === state.playerId ? ' (you)' : ''}</span><span style="color:var(--muted)">${escapeHtml(t.name)}</span>`;
+        sb.appendChild(li);
+      }
+    }
+  } else {
+    msg.scoreboard.forEach((p, i) => {
+      const li = document.createElement('li');
+      if (i === 0) li.classList.add('gold');
+      else if (i === 1) li.classList.add('silver');
+      else if (i === 2) li.classList.add('bronze');
+      const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
+      li.innerHTML = `<span>${medal} ${escapeHtml(p.name)}${p.id === state.playerId ? ' (you)' : ''}</span><span class="pts">${p.score}</span>`;
+      sb.appendChild(li);
+    });
+  }
+
+  const rows = $('reveal-rows');
+  rows.innerHTML = '';
+  for (const r of msg.requests) {
+    const tr = document.createElement('tr');
+    const correctCls = r.submitted_peptide_is_correct === true ? 'ok'
+                      : r.submitted_peptide_is_correct === false ? 'no' : '';
+    const validCls = r.is_dna_valid ? 'ok' : 'no';
+    // Source/target label
+    const reqCell = mode === 'teams'
+      ? `${escapeHtml(playerName(r.requester_id))} <span style="color:var(--muted)">(${escapeHtml(teamById(r.requester_team_id)?.name ?? '?')})</span>`
+      : escapeHtml(playerName(r.requester_id));
+    const decCell = mode === 'teams'
+      ? (r.submitted_by_id
+          ? `${escapeHtml(playerName(r.submitted_by_id))} <span style="color:var(--muted)">(${escapeHtml(teamById(r.decrypter_team_id)?.name ?? '?')})</span>`
+          : `<span style="color:var(--muted)">Team ${escapeHtml(teamById(r.decrypter_team_id)?.name ?? '?')}</span>`)
+      : escapeHtml(playerName(r.decrypter_id));
+    tr.innerHTML = `
+      <td>${escapeHtml(r.protein_name)}</td>
+      <td>${reqCell}</td>
+      <td>${decCell}</td>
+      <td style="font-family:monospace">${escapeHtml(r.dna_sequence)}</td>
+      <td style="font-family:monospace">${escapeHtml(r.correct_peptide)}</td>
+      <td class="${correctCls}" style="font-family:monospace">${r.submitted_peptide ? escapeHtml(r.submitted_peptide) : '—'}</td>
+      <td class="${validCls}">${r.is_dna_valid ? 'yes' : 'no'}</td>
+      <td>${r.state}</td>
+    `;
+    rows.appendChild(tr);
+  }
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function escapeAttr(s) { return escapeHtml(s).replace(/'/g, '&#39;'); }
+
+//======================================================================
+// Actions
+//======================================================================
+function openNew() {
+  if (state.phase !== 'in_progress') return;
+  $('new-protein-name').value = '';
+  $('new-dna').value = '';
+  $('modal-new').classList.add('active');
+  $('new-protein-name').focus();
+}
+function closeNew() { $('modal-new').classList.remove('active'); }
+function submitNew() {
+  const name = $('new-protein-name').value.trim();
+  const dna = $('new-dna').value.trim();
+  const target = $('new-decrypter').value;
+  if (!name || !dna || !target) { toast('Fill all fields', 'var(--bad)'); return; }
+  const payload = { type: 'create_request', protein_name: name, dna_sequence: dna };
+  if (target.startsWith('team:')) payload.decrypter_team_id = target.slice(5);
+  else if (target.startsWith('player:')) payload.decrypter_id = target.slice(7);
+  else payload.decrypter_id = target;  // backwards-compat
+  send(payload);
+  closeNew();
+}
+
+function openDecrypt(reqId, proteinName) {
+  state.decryptingRequestId = reqId;
+  $('decrypt-protein').textContent = proteinName;
+  $('peptide-guess').value = '';
+  $('modal-decrypt').classList.add('active');
+  $('peptide-guess').focus();
+}
+function closeDecrypt() {
+  $('modal-decrypt').classList.remove('active');
+  state.decryptingRequestId = null;
+}
+function submitDecrypt() {
+  const guess = $('peptide-guess').value.trim();
+  if (!guess) { toast('Enter a guess', 'var(--bad)'); return; }
+  send({ type: 'submit_decryption', request_id: state.decryptingRequestId, peptide_guess: guess });
+  closeDecrypt();
+}
+
+function confirmReq(id) { send({ type: 'confirm_decryption', request_id: id }); }
+function rejectReq(id) { send({ type: 'reject_decryption', request_id: id }); }
+
+//======================================================================
+// Landing & lobby setup
+//======================================================================
+function setupLanding() {
+  $('tab-create').onclick = () => {
+    $('tab-create').classList.add('active');
+    $('tab-join').classList.remove('active');
+    $('create-form').style.display = 'block';
+    $('join-form').style.display = 'none';
+  };
+  $('tab-join').onclick = () => {
+    $('tab-join').classList.add('active');
+    $('tab-create').classList.remove('active');
+    $('create-form').style.display = 'none';
+    $('join-form').style.display = 'block';
+  };
+
+  // Mode toggle inside create form
+  let createMode = 'solo';
+  $('mode-solo').onclick = () => {
+    createMode = 'solo';
+    $('mode-solo').classList.add('active');
+    $('mode-teams').classList.remove('active');
+    $('team-config').style.display = 'none';
+  };
+  $('mode-teams').onclick = () => {
+    createMode = 'teams';
+    $('mode-teams').classList.add('active');
+    $('mode-solo').classList.remove('active');
+    $('team-config').style.display = 'block';
+  };
+
+  $('btn-create').onclick = async () => {
+    try {
+      const body = {
+        host_name: $('host-name').value.trim(),
+        expected_players: parseInt($('expected-players').value, 10),
+        end_window_minutes: [parseFloat($('end-min').value), parseFloat($('end-max').value)],
+        mode: createMode,
+      };
+      if (!body.host_name) throw new Error('Name required');
+      if (createMode === 'teams') {
+        const names = $('team-names').value.split(',').map(s => s.trim()).filter(Boolean);
+        if (names.length < 2) throw new Error('Need at least 2 team names');
+        const palette = ['#f85149', '#58a6ff', '#3fb950', '#d29922', '#a371f7', '#ec6cb9'];
+        body.teams = names.map((n, i) => ({ name: n, color: palette[i % palette.length] }));
+        if (body.expected_players < names.length) {
+          throw new Error('Need at least as many players as teams');
+        }
+      }
+      const r = await api('/api/games', body);
+      state.gameId = r.game_id;
+      state.playerId = r.player_id;
+      state.hostPlayerId = r.host_player_id;
+      state.expectedPlayers = r.expected_players;
+      state.codonTable = r.codon_table;
+      state.mode = r.mode || 'solo';
+      state.teams = r.teams || [];
+      history.replaceState(null, '', `/?game=${state.gameId}`);
+      state.phase = 'lobby';
+      connectWs();
+    } catch (e) { toast(e.message, 'var(--bad)'); }
+  };
+
+  $('btn-join').onclick = async () => {
+    try {
+      const gameId = $('join-game-id').value.trim();
+      const name = $('join-name').value.trim();
+      if (!gameId || !name) throw new Error('Need name and game ID');
+      const r = await api(`/api/games/${gameId}/join`, { name });
+      state.gameId = r.game_id;
+      state.playerId = r.player_id;
+      state.hostPlayerId = r.host_player_id;
+      state.expectedPlayers = r.expected_players;
+      state.codonTable = r.codon_table;
+      state.mode = r.mode || 'solo';
+      state.teams = r.teams || [];
+      history.replaceState(null, '', `/?game=${state.gameId}`);
+      connectWs();
+    } catch (e) { toast(e.message, 'var(--bad)'); }
+  };
+
+  $('btn-start').onclick = () => send({ type: 'start_game' });
+
+  $('btn-copy-link').onclick = () => {
+    navigator.clipboard.writeText(shareUrl()).then(() => toast('Copied!', 'var(--good)'));
+  };
+
+  // Team select in lobby
+  $('my-team-select').onchange = (e) => {
+    const tid = e.target.value || null;
+    send({ type: 'assign_team', team_id: tid });
+  };
+
+  $('btn-new-request').onclick = openNew;
+  $('cancel-new').onclick = closeNew;
+  $('confirm-new').onclick = submitNew;
+  $('cancel-decrypt').onclick = closeDecrypt;
+  $('confirm-decrypt').onclick = submitDecrypt;
+
+  // If URL has ?game=..., pre-fill join form
+  const params = new URLSearchParams(location.search);
+  const g = params.get('game');
+  if (g) {
+    $('join-game-id').value = g;
+    $('tab-join').click();
+    $('join-name').focus();
+  }
+}
+
+setupLanding();
+</script>
+</body>
+</html>
