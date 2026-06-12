@@ -390,7 +390,6 @@ def create_request(
     requester = game.players[requester_id]
     truth = translate_dna(dna_sequence, game.codon_table)
     valid = is_dna_valid(dna_sequence, game.codon_table)
-    rng = secrets.SystemRandom()
 
     if game.mode == Mode.TEAMS:
         if requester.team_id is None:
@@ -398,7 +397,7 @@ def create_request(
         eligible_team_ids = [tid for tid in game.teams if tid != requester.team_id]
         if not eligible_team_ids:
             raise ValueError("No opposing team available")
-        assigned_team_id = rng.choice(eligible_team_ids)
+        assigned_team_id = secrets.choice(eligible_team_ids)
         r = Request(
             id=_new_id("r"),
             requester_id=requester_id,
@@ -414,7 +413,7 @@ def create_request(
         eligible_player_ids = [pid for pid in game.players if pid != requester_id]
         if not eligible_player_ids:
             raise ValueError("No other player available")
-        assigned_player_id = rng.choice(eligible_player_ids)
+        assigned_player_id = secrets.choice(eligible_player_ids)
         r = Request(
             id=_new_id("r"),
             requester_id=requester_id,

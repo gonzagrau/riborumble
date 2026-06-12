@@ -738,7 +738,7 @@ function renderOutgoing() {
     if (r.submitted_peptide) {
       submittedHtml = `<div class="peptide">Their guess: ${escapeHtml(r.submitted_peptide)}</div>`;
     }
-    if (r.state === 'pending_approval' && r.submitted_peptide) {
+    if (r.state === 'pending_approval') {
       actions = `
         <div class="actions">
           <button class="good" onclick="confirmReq('${r.id}')">✓ Confirm</button>
