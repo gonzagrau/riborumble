@@ -47,7 +47,7 @@ POINTS_CORRECT_CONFIRMED = +3   # decrypter rewarded for confirmed answer
 POINTS_REJECTED = -3            # decrypter penalized when requester rejects
 POINTS_INVALID_DNA_REJECTED = -3  # requester penalized when caught sending garbage
 POINTS_REQUESTER_BAD_DECISION = -2  # requester penalized for confirm-wrong or reject-correct
-POINTS_END_AWAITING = -2        # decrypter penalized for unread paper at game end
+POINTS_END_AWAITING = -2        # decrypter penalized for undecrypted request at game end
 POINTS_END_PENDING = +2         # decrypter rewarded for unresolved submission at game end
 
 
@@ -579,7 +579,7 @@ def end_game(game: Game) -> Event:
     and return the final reveal payload.
 
     Sweep rules:
-      - AWAITING_DECRYPTION  -> decrypter -2  (paper left unread)
+      - AWAITING_DECRYPTION  -> decrypter -2  (request left undecrypted)
       - PENDING_APPROVAL     -> decrypter +2  (submission left unjudged)
     """
     if game.phase == Phase.ENDED:
