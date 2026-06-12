@@ -2,20 +2,18 @@
 
 A real-time multiplayer LAN-party game where players are simultaneously
 biochemists translating each other's "DNA" messages into polypeptide
-"passwords". The trick: the DNA is on a piece of paper that gets handed
-physically between players, while the app handles state, scoring, and
-the silently lurking final reckoning.
+"passwords". DNA and translations flow entirely through the app while it
+handles state, scoring, and the silently lurking final reckoning.
 
 ## How the game plays
 
 Each player is both a **requester** and a **decrypter** at all times.
 
-- As a requester: invent a protein name and a DNA sequence, log them in
-  the app, then hand a slip of paper with `protein - dna` to the
-  decrypter of your choice.
-- As a decrypter: receive the paper, work out the polypeptide using the
-  printed codon table, write it on a new slip of paper (`protein - peptide`),
-  hand it back to the requester, and log your guess in the app.
+- As a requester: invent a protein name and a DNA sequence and log them
+  in the app. The app randomly assigns another player/team to decrypt it.
+- As a decrypter: open received requests in the app, read the DNA there,
+  work out the polypeptide using the codon table, and submit your guess
+  in the app.
 - The requester then **confirms** or **rejects** the decryption.
 
 ### Scoring
@@ -35,7 +33,7 @@ At game end (sweep):
 
 | Pending state | Effect |
 |---|---|
-| Paper never decrypted | Decrypter **−2** |
+| Request never decrypted | Decrypter **−2** |
 | Submission never resolved | Decrypter **+2** |
 
 Two key consequences:
@@ -67,9 +65,8 @@ and configure team names. In team mode:
 - Each team has a shared "sent" stack and a shared "received" stack.
   Any teammate can submit a decryption, and any teammate can confirm
   or reject a pending decision.
-- Requests target an *opposing team* (not a specific person). Any member
-  of the target team can pick up the paper and decrypt it. Same-team
-  sends are rejected.
+- Requests are assigned to a random *opposing team* (not a specific
+  person). Any member of that team can decrypt it in the app.
 - Points go to the team ledger. The end-game reveal shows the team
   scoreboard, then individuals grouped by team.
 - An audit trail records who initiated each request, who decrypted,
@@ -105,12 +102,12 @@ created the game. They open the link, type their name, and they're in.
 3. Enter your name and hit Join.
 4. Wait for the host to start.
 
-## Paper handout for the codon table
+## Optional codon table handout
 
-You need physical paper slips for the gameplay, and a printed cheat
-sheet for the codon table. The codon table is shown on the lobby screen
-and also available at `GET /api/games/<game_id>/codon-table` if you'd
-rather print from a terminal.
+DNA and translations are handled in-app. A printed codon-table cheat
+sheet is still useful and is shown on the lobby screen. It is also
+available at `GET /api/games/<game_id>/codon-table` if you'd rather
+print from a terminal.
 
 Default table (10 codons, 7 AAs + Stop):
 

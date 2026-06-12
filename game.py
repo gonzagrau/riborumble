@@ -147,13 +147,14 @@ def _request_view_for_requester(r: Request) -> Event:
 
 
 def _request_view_for_decrypter(r: Request) -> Event:
-    """What a decrypter (or their teammate in team mode) sees — no DNA, no truth."""
+    """What a decrypter (or their teammate in team mode) sees — no truth."""
     return {
         "id": r.id,
         "role": "decrypter",
         "requester_id": r.requester_id,
         "requester_team_id": r.requester_team_id,  # None in solo mode
         "protein_name": r.protein_name,
+        "dna_sequence": r.dna_sequence,
         "state": r.state.value,
         "submitted_peptide": r.submitted_peptide,
         "submitted_by_id": r.submitted_by_id,
@@ -371,9 +372,9 @@ def create_request(
     """
     Log a new outgoing request.
 
-    In SOLO mode, pass `decrypter_id` (an individual).
-    In TEAMS mode, pass `decrypter_team_id` (the target opposing team).
-    Same-team sends are rejected in TEAMS mode.
+    Assignment is random and always excludes the requester (solo mode) or
+    the requester's own team (team mode). Optional decrypter arguments are
+    accepted for backward compatibility but ignored.
     """
     if game.phase != Phase.IN_PROGRESS:
         raise ValueError("Game is not in progress")
@@ -389,19 +390,20 @@ def create_request(
     requester = game.players[requester_id]
     truth = translate_dna(dna_sequence, game.codon_table)
     valid = is_dna_valid(dna_sequence, game.codon_table)
+    rng = secrets.SystemRandom()
 
     if game.mode == Mode.TEAMS:
-        if decrypter_team_id is None:
-            raise ValueError("decrypter_team_id required in team mode")
-        if decrypter_team_id not in game.teams:
-            raise ValueError("Unknown decrypter team")
-        if decrypter_team_id == requester.team_id:
-            raise ValueError("Cannot send to your own team")
+        if requester.team_id is None:
+            raise ValueError("Requester must be assigned to a team")
+        eligible_team_ids = [tid for tid in game.teams if tid != requester.team_id]
+        if not eligible_team_ids:
+            raise ValueError("No opposing team available")
+        assigned_team_id = rng.choice(eligible_team_ids)
         r = Request(
             id=_new_id("r"),
             requester_id=requester_id,
             decrypter_id=None,
-            decrypter_team_id=decrypter_team_id,
+            decrypter_team_id=assigned_team_id,
             requester_team_id=requester.team_id,
             protein_name=protein_name,
             dna_sequence=dna_sequence,
@@ -409,16 +411,14 @@ def create_request(
             is_dna_valid=valid,
         )
     else:
-        if decrypter_id is None:
-            raise ValueError("decrypter_id required in solo mode")
-        if decrypter_id not in game.players:
-            raise ValueError("Unknown decrypter")
-        if decrypter_id == requester_id:
-            raise ValueError("Cannot send to yourself")
+        eligible_player_ids = [pid for pid in game.players if pid != requester_id]
+        if not eligible_player_ids:
+            raise ValueError("No other player available")
+        assigned_player_id = rng.choice(eligible_player_ids)
         r = Request(
             id=_new_id("r"),
             requester_id=requester_id,
-            decrypter_id=decrypter_id,
+            decrypter_id=assigned_player_id,
             decrypter_team_id=None,
             requester_team_id=None,
             protein_name=protein_name,

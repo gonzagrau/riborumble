@@ -365,7 +365,7 @@
         <div class="body" id="outgoing-list"></div>
       </div>
       <div class="column">
-        <header><h3>📥 Received requests <span style="color:var(--muted); font-size:12px;">(decrypt from paper)</span></h3></header>
+        <header><h3>📥 Received requests <span style="color:var(--muted); font-size:12px;">(DNA shown in app)</span></h3></header>
         <div class="body" id="incoming-list"></div>
       </div>
     </div>
@@ -405,14 +405,12 @@
     <input id="new-protein-name" autocomplete="off" />
     <label>DNA sequence</label>
     <textarea id="new-dna" placeholder="ATG GTT TTT GAA TAA"></textarea>
-    <label id="new-decrypter-label">Send to</label>
-    <select id="new-decrypter"></select>
     <div class="row" style="margin-top:16px">
       <button class="secondary" id="cancel-new">Cancel</button>
       <button id="confirm-new">Send</button>
     </div>
     <p style="color:var(--muted); font-size:12px; margin-top:12px">
-      Remember: hand the paper with "<em>Protein - DNA</em>" to the decrypter physically.
+      The recipient (or recipient team) is assigned randomly.
     </p>
   </div>
 </div>
@@ -422,7 +420,7 @@
   <div class="modal">
     <h3>Decrypt: <span id="decrypt-protein"></span></h3>
     <p style="color:var(--muted); font-size:13px;">
-      Read the DNA from the paper. Submit your guessed polypeptide below.
+      Use the DNA shown in the request card and submit your guessed polypeptide below.
     </p>
     <label>Peptide guess</label>
     <input id="peptide-guess" placeholder="Met-Val-Phe-Glu-Stop" autocomplete="off" />
@@ -706,29 +704,6 @@ function renderLobby() {
 function renderGame() {
   renderOutgoing();
   renderIncoming();
-  // "Send to" dropdown: in team mode → opposing teams; in solo → other players
-  const sel = $('new-decrypter');
-  sel.innerHTML = '';
-  if (state.mode === 'teams') {
-    const mine = myTeamId();
-    for (const t of state.teams) {
-      if (t.id === mine) continue;
-      const opt = document.createElement('option');
-      opt.value = 'team:' + t.id;
-      opt.textContent = 'Team ' + t.name;
-      sel.appendChild(opt);
-    }
-    $('new-decrypter-label').textContent = 'Send to team';
-  } else {
-    for (const p of state.players) {
-      if (p.id === state.playerId) continue;
-      const opt = document.createElement('option');
-      opt.value = 'player:' + p.id;
-      opt.textContent = p.name;
-      sel.appendChild(opt);
-    }
-    $('new-decrypter-label').textContent = 'Send to';
-  }
   // Inline codon table
   $('codon-table-inline').textContent = Object.entries(state.codonTable)
     .map(([c, a]) => `${c}→${a}`).join('  ');
@@ -760,8 +735,10 @@ function renderOutgoing() {
     div.className = 'req-item';
     let actions = '';
     let submittedHtml = '';
-    if (r.state === 'pending_approval' && r.submitted_peptide) {
+    if (r.submitted_peptide) {
       submittedHtml = `<div class="peptide">Their guess: ${escapeHtml(r.submitted_peptide)}</div>`;
+    }
+    if (r.state === 'pending_approval' && r.submitted_peptide) {
       actions = `
         <div class="actions">
           <button class="good" onclick="confirmReq('${r.id}')">✓ Confirm</button>
@@ -821,7 +798,7 @@ function renderIncoming() {
     const srcLabel = state.mode === 'teams'
       ? `Team ${teamById(r.requester_team_id)?.name ?? '???'}`
       : playerName(r.requester_id);
-    let auditHtml = '<div class="meta">DNA is on the paper they gave you.</div>';
+    let auditHtml = '';
     if (state.mode === 'teams') {
       const parts = [`Initiated by ${escapeHtml(playerName(r.requester_id))}`];
       if (r.submitted_by_id) {
@@ -840,6 +817,7 @@ function renderIncoming() {
         <span>${escapeHtml(r.protein_name)} ← ${escapeHtml(srcLabel)}</span>
         ${statePill(r.state)}
       </div>
+      <div class="dna">${escapeHtml(r.dna_sequence ?? '')}</div>
       ${auditHtml}
       ${submittedHtml}
       ${action}
@@ -946,12 +924,8 @@ function closeNew() { $('modal-new').classList.remove('active'); }
 function submitNew() {
   const name = $('new-protein-name').value.trim();
   const dna = $('new-dna').value.trim();
-  const target = $('new-decrypter').value;
-  if (!name || !dna || !target) { toast('Fill all fields', 'var(--bad)'); return; }
+  if (!name || !dna) { toast('Fill all fields', 'var(--bad)'); return; }
   const payload = { type: 'create_request', protein_name: name, dna_sequence: dna };
-  if (target.startsWith('team:')) payload.decrypter_team_id = target.slice(5);
-  else if (target.startsWith('player:')) payload.decrypter_id = target.slice(7);
-  else payload.decrypter_id = target;  // backwards-compat
   send(payload);
   closeNew();
 }
