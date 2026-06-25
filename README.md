@@ -111,6 +111,10 @@ python main.py             # or: uvicorn main:app --host 0.0.0.0 --port 8000
 The server binds to `0.0.0.0:8000` by default (so other devices on your
 LAN can reach it). Open `http://<host-lan-ip>:8000/` in a browser.
 
+Important: run a single server process/worker. Game state lives in
+process memory, so multiple Uvicorn workers would split players across
+different game instances.
+
 ### Finding your LAN IP
 
 - **macOS / Linux**: `ipconfig getifaddr en0` or `hostname -I`
@@ -163,11 +167,38 @@ same game restores the player's state. Tabs and laptops dying is fine.
 Environment variables read by `main.py`:
 - `HOST` (default `0.0.0.0`)
 - `PORT` (default `8000`)
+- `GAME_CLEANUP_AFTER_SECONDS` (default `21600`; set to `-1` to keep
+  ended games in memory until restart)
 
 Game-time configuration (set when creating the game in the UI):
 - Number of players (2–20)
 - End window in minutes (min, max)
 - Codon table (defaults provided, override via the API)
+
+Runtime limits:
+- Player names: 40 characters
+- Team names: 32 characters
+- Protein names: 60 characters
+- DNA requests: 300 bases after whitespace removal
+- Peptide guesses: 400 characters
+- Team colors: hex colors only, e.g. `#58a6ff`
+- Custom codon tables: at most 64 codons, using amino acids supported by
+  the peptide parser
+
+## Testing
+
+The test suite uses Python's standard `unittest` runner, so no extra test
+dependency is required.
+
+```bash
+venv/bin/python -m unittest discover -v
+```
+
+The suite covers codon normalization/translation, custom table validation,
+peptide matching, solo and team state transitions, every scoring-table
+outcome, invalid-DNA flagging, end-game sweep scoring, reconnect-after-end
+reveal behavior, cleanup of ended games, private live-score payloads, API
+helper behavior, and frontend JavaScript syntax when `node` is available.
 
 ## File layout
 
@@ -177,6 +208,7 @@ riborumble/
 ├── game.py           # state machine, scoring (no network code)
 ├── main.py           # FastAPI app: REST + WebSocket + static
 ├── static/index.html # single-page frontend
+├── tests/            # unittest coverage for codon, game, API, and frontend glue
 ├── requirements.txt
 └── README.md
 ```

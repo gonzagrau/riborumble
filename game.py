@@ -10,6 +10,7 @@ to reason about and test.
 from __future__ import annotations
 
 import secrets
+import re
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -18,6 +19,8 @@ from typing import Any
 from codon import (
     DEFAULT_CODON_TABLE,
     is_dna_valid,
+    normalize_codon_table,
+    normalize_dna,
     peptides_match,
     sequence_amino_acid_length,
     translate_dna,
@@ -54,6 +57,14 @@ POINTS_INVALID_DNA_REJECTED = -3  # requester penalized when caught sending garb
 POINTS_REQUESTER_BAD_DECISION = -2  # requester penalized for confirm-wrong or reject-correct
 POINTS_END_AWAITING = -2        # decrypter penalized for undecrypted request at game end
 POINTS_END_PENDING = +2         # decrypter rewarded for unresolved submission at game end
+
+MAX_PLAYER_NAME_LENGTH = 40
+MAX_TEAM_NAME_LENGTH = 32
+MAX_PROTEIN_NAME_LENGTH = 60
+MAX_DNA_LENGTH = 300
+MAX_PEPTIDE_LENGTH = 400
+HEX_COLOR_PATTERN = r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$"
+_HEX_COLOR_RE = re.compile(HEX_COLOR_PATTERN)
 
 
 # --- Data classes ---------------------------------------------------------
@@ -238,6 +249,38 @@ def _new_id(prefix: str) -> str:
     return f"{prefix}_{secrets.token_urlsafe(6)}"
 
 
+def _clean_text(value: str, field_name: str, max_length: int) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{field_name} must be text")
+    cleaned = value.strip()
+    if not cleaned:
+        raise ValueError(f"{field_name} required")
+    if len(cleaned) > max_length:
+        raise ValueError(f"{field_name} must be at most {max_length} characters")
+    return cleaned
+
+
+def _clean_dna(value: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError("DNA sequence must be text")
+    cleaned = value.strip()
+    if not cleaned:
+        raise ValueError("DNA sequence required")
+    normalized_length = len(normalize_dna(cleaned))
+    if normalized_length > MAX_DNA_LENGTH:
+        raise ValueError(f"DNA sequence must be at most {MAX_DNA_LENGTH} bases")
+    return cleaned
+
+
+def _clean_team_color(value: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError("Team color must be text")
+    cleaned = value.strip()
+    if not _HEX_COLOR_RE.fullmatch(cleaned):
+        raise ValueError("Team color must be a hex color like #58a6ff")
+    return cleaned
+
+
 def new_game(
     host_name: str,
     expected_players: int,
@@ -258,16 +301,17 @@ def new_game(
     lo, hi = end_window_minutes
     if not (0 < lo <= hi):
         raise ValueError("Invalid end window")
-    host = Player(id=_new_id("p"), name=host_name.strip())
-    if not host.name:
-        raise ValueError("Host name required")
+    host = Player(
+        id=_new_id("p"),
+        name=_clean_text(host_name, "Host name", MAX_PLAYER_NAME_LENGTH),
+    )
 
     game = Game(
         id=_new_id("g"),
         host_player_id=host.id,
         expected_players=expected_players,
         end_window_seconds=(lo * 60, hi * 60),
-        codon_table=codon_table or dict(DEFAULT_CODON_TABLE),
+        codon_table=normalize_codon_table(codon_table or dict(DEFAULT_CODON_TABLE)),
         mode=mode,
     )
 
@@ -277,10 +321,10 @@ def new_game(
         if expected_players < len(teams):
             raise ValueError("Not enough players for that many teams")
         for spec in teams:
-            tname = spec.get("name", "").strip()
-            tcolor = spec.get("color", "#888")
-            if not tname:
-                raise ValueError("Each team needs a name")
+            tname = _clean_text(
+                spec.get("name", ""), "Team name", MAX_TEAM_NAME_LENGTH
+            )
+            tcolor = _clean_team_color(spec.get("color", "#888"))
             t = Team(id=_new_id("t"), name=tname, color=tcolor)
             game.teams[t.id] = t
 
@@ -295,9 +339,7 @@ def join_game(game: Game, name: str) -> Player:
     works in any phase; capacity check only applies to fresh joins
     during LOBBY.
     """
-    name = name.strip()
-    if not name:
-        raise ValueError("Name required")
+    name = _clean_text(name, "Name", MAX_PLAYER_NAME_LENGTH)
     existing = next(
         (p for p in game.players.values() if p.name.lower() == name.lower()),
         None,
@@ -417,12 +459,8 @@ def create_request(
         raise ValueError("Game is not in progress")
     if requester_id not in game.players:
         raise ValueError("Unknown requester")
-    protein_name = protein_name.strip()
-    if not protein_name:
-        raise ValueError("Protein name required")
-    dna_sequence = dna_sequence.strip()
-    if not dna_sequence:
-        raise ValueError("DNA sequence required")
+    protein_name = _clean_text(protein_name, "Protein name", MAX_PROTEIN_NAME_LENGTH)
+    dna_sequence = _clean_dna(dna_sequence)
 
     requester = game.players[requester_id]
     truth = translate_dna(dna_sequence, game.codon_table)
@@ -494,9 +532,7 @@ def submit_decryption(
     _authorize_decrypter(game, r, decrypter_id)
     if r.state != RequestState.AWAITING_DECRYPTION:
         raise ValueError("Request is not awaiting decryption")
-    peptide_guess = peptide_guess.strip()
-    if not peptide_guess:
-        raise ValueError("Empty peptide guess")
+    peptide_guess = _clean_text(peptide_guess, "Peptide guess", MAX_PEPTIDE_LENGTH)
     r.submitted_peptide = peptide_guess
     r.submitted_peptide_is_correct = peptides_match(peptide_guess, r.correct_peptide)
     r.submitted_by_id = decrypter_id

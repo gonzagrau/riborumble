@@ -39,6 +39,36 @@ AA_ALIASES: dict[str, str] = {
     "STOP": "Stop", "*": "Stop", "X": "Stop",
 }
 
+SUPPORTED_AAS = set(AA_ALIASES.values())
+MAX_CODON_TABLE_ENTRIES = 64
+
+
+def normalize_codon_table(codon_table: dict[str, str]) -> dict[str, str]:
+    """
+    Validate and normalize a codon table supplied through the API.
+
+    Codon keys are uppercased after whitespace removal. Amino-acid values may
+    use the same aliases accepted for guesses, but must resolve to this game's
+    supported canonical labels so players can submit matching answers.
+    """
+    if not codon_table:
+        raise ValueError("Codon table required")
+    if len(codon_table) > MAX_CODON_TABLE_ENTRIES:
+        raise ValueError(f"Codon table can contain at most {MAX_CODON_TABLE_ENTRIES} entries")
+
+    normalized: dict[str, str] = {}
+    for raw_codon, raw_aa in codon_table.items():
+        if not isinstance(raw_codon, str) or not isinstance(raw_aa, str):
+            raise ValueError("Codon table entries must be text")
+        codon = normalize_dna(raw_codon)
+        if not re.fullmatch(r"[ATCG]{3}", codon):
+            raise ValueError(f"Invalid codon: {raw_codon}")
+        aa = AA_ALIASES.get(raw_aa.strip().upper())
+        if aa is None or aa not in SUPPORTED_AAS:
+            raise ValueError(f"Unsupported amino acid: {raw_aa}")
+        normalized[codon] = aa
+    return normalized
+
 
 def normalize_dna(dna: str) -> str:
     """Strip whitespace and uppercase. Does NOT validate — invalid DNA is allowed."""
@@ -53,8 +83,8 @@ def is_dna_valid(dna: str, codon_table: dict[str, str]) -> bool:
       - length is a multiple of 3,
       - every triplet exists in the codon table.
 
-    The decrypter never sees this flag. It only governs scoring when
-    the decrypter rejects a request (invalid → requester loses 3).
+    The decrypter never sees this flag. It governs scoring when invalid
+    DNA is rejected or flagged.
     """
     cleaned = normalize_dna(dna)
     if not cleaned:
