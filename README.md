@@ -13,40 +13,62 @@ Each player is both a **requester** and a **decrypter** at all times.
   in the app. The app randomly assigns another player/team to decrypt it.
 - As a decrypter: open received requests in the app, read the DNA there,
   work out the polypeptide using the codon table, and submit your guess
-  in the app.
-- The requester then **confirms** or **rejects** the decryption.
+  in the app. If the DNA itself is invalid, flag it instead.
+- If the decrypter submits a peptide, the requester then **confirms** or
+  **rejects** the decryption.
+- Everyone sees only their own live score (or their team's live score).
+  The full leaderboard stays hidden until the end.
 
 ### Scoring
 
 During the game:
 
+Every score event is multiplied by:
+
+```
+m = 1 + complete_codon_count / 10
+```
+
+So a 5-amino-acid request has `m = 1.5`, and a base `+3` becomes `+4.5`.
+
 | Requester's call | DNA | Submission | Decrypter | Requester |
 |---|---|---|---|---|
-| Confirm | valid | correct | **+3** | 0 |
-| Confirm | valid | wrong | **+3** | **−2** |
-| Confirm | invalid | (any) | **+3** | **−2** |
-| Reject | valid | correct | **−3** | **−2** |
-| Reject | valid | wrong | **−3** | 0 |
-| Reject | invalid | (any) | 0 | **−3** |
+| Confirm | valid | correct | **+3m** | **+1m** |
+| Confirm | valid | wrong | **+3m** | **−2m** |
+| Confirm | invalid | (any) | **+3m** | **−2m** |
+| Reject | valid | correct | **−3m** | **−2m** |
+| Reject | valid | wrong | **−3m** | 0 |
+| Reject | invalid | (any) | **+1m** | **−3m** |
+
+Receiver-side invalid flag:
+
+| Receiver's call | DNA | Receiver | Requester |
+|---|---|---|---|
+| Flag invalid | invalid | **+1m** | **−3m** |
+| Flag invalid | valid | **−3m** | 0 |
 
 At game end (sweep):
 
 | Pending state | Effect |
 |---|---|
-| Request never decrypted | Decrypter **−2** |
-| Submission never resolved | Decrypter **+2** |
+| Request never decrypted | Decrypter **−2m** |
+| Submission never resolved | Decrypter **+2m** |
 
 Two key consequences:
-- A wrongly-decrypted answer is worth **+2** if the requester forgets to
+- A wrongly-decrypted answer is worth **+2m** if the requester forgets to
   reject in time. Sit on bad guesses; the clock is your friend.
 - Conversely, the requester is *also* on the clock: forgetting to confirm
-  a correct answer leaks +2 to the decrypter you wanted to deny.
+  a correct answer leaks +2m to the decrypter you wanted to deny.
+- Requesters earn **+1m** for confirming a valid correct translation, so
+  well-formed requests can build their score instead of just creating work.
+- Decrypters can flag invalid DNA directly. Correct flags earn **+1m**
+  and punish the sender; false flags cost the decrypter **−3m**.
 - The requester is graded too. Confirming a wrong answer or rejecting a
-  correct one costs the requester **−2** on top of whatever happens to
+  correct one costs the requester **−2m** on top of whatever happens to
   the decrypter. Pay attention — careless judgments are punished.
-- The server silently knows the truth but **never tells anyone during the
-  game**. Players are free to confirm wrong answers or reject correct
-  ones — and they will eat the consequence according to the rules above.
+- The server silently knows the truth but does not reveal the true peptide
+  or validity flag during the game. Live score changes can still expose
+  the consequence of a decision to the affected player/team.
 
 ### When the game ends
 
@@ -69,6 +91,8 @@ and configure team names. In team mode:
   person). Any member of that team can decrypt it in the app.
 - Points go to the team ledger. The end-game reveal shows the team
   scoreboard, then individuals grouped by team.
+- During play, teammates see only their own team's live score, not the
+  whole leaderboard.
 - An audit trail records who initiated each request, who decrypted,
   and who confirmed/rejected — handy for post-game accountability
   ("Bob, why did you confirm that mess?").
@@ -109,7 +133,7 @@ sheet is still useful and is shown on the lobby screen. It is also
 available at `GET /api/games/<game_id>/codon-table` if you'd rather
 print from a terminal.
 
-Default table (10 codons, 7 AAs + Stop):
+Default table (10 codons, 9 AAs + Stop):
 
 ```
 ATG→Met  GTT→Val  TTT→Phe  GAA→Glu  AAA→Lys

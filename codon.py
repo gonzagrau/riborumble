@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 
-# Reduced codon table — 10 codons, 7 amino acids + Stop.
+# Reduced codon table — 10 codons, 9 amino acids + Stop.
 # No two codons map to the same amino acid in this subset, so scoring
 # is unambiguous against a canonical answer.
 DEFAULT_CODON_TABLE: dict[str, str] = {
@@ -83,6 +83,17 @@ def translate_dna(dna: str, codon_table: dict[str, str]) -> str:
         triplet = cleaned[i : i + 3]
         aas.append(codon_table.get(triplet, "?"))
     return "-".join(aas)
+
+
+def sequence_amino_acid_length(dna: str) -> int:
+    """
+    Count complete codon slots in a DNA sequence.
+
+    This intentionally counts unknown triplets too, because invalid long
+    requests should carry the same score stakes as valid long requests.
+    Partial trailing bases do not produce an amino-acid slot.
+    """
+    return len(normalize_dna(dna)) // 3
 
 
 def canonicalize_peptide(peptide: str) -> str:

@@ -235,10 +235,17 @@ async def _handle_client_message(
             elif mtype == "confirm_decryption":
                 r, _ = gm.confirm_decryption(game, player_id, msg["request_id"])
                 await _broadcast_decision(game, r, "confirmed")
+                await _broadcast_scores(game)
 
             elif mtype == "reject_decryption":
                 r, _ = gm.reject_decryption(game, player_id, msg["request_id"])
                 await _broadcast_decision(game, r, "rejected")
+                await _broadcast_scores(game)
+
+            elif mtype == "flag_invalid_request":
+                r, _ = gm.flag_invalid_request(game, player_id, msg["request_id"])
+                await _broadcast_invalid_flag(game, r)
+                await _broadcast_scores(game)
 
             elif mtype == "ping":
                 await ws.send_json({"type": "pong"})
@@ -317,6 +324,16 @@ async def _broadcast_snapshots(game: gm.Game) -> None:
         await _broadcast_to(game, player_id, snap)
 
 
+async def _broadcast_scores(game: gm.Game) -> None:
+    """Broadcast only each recipient's own score/team score."""
+    for player_id in game.players:
+        await _broadcast_to(
+            game,
+            player_id,
+            {"type": "score_update", "score": gm.score_view_for(game, player_id)},
+        )
+
+
 async def _broadcast_decision(game: gm.Game, r: gm.Request, decision: str) -> None:
     """Notify both sides of a confirm/reject."""
     await _broadcast_to_requester_side(
@@ -330,6 +347,18 @@ async def _broadcast_decision(game: gm.Game, r: gm.Request, decision: str) -> No
             "request": gm._request_view_for_decrypter(r),
             "decision": decision,
         },
+    )
+
+
+async def _broadcast_invalid_flag(game: gm.Game, r: gm.Request) -> None:
+    """Notify both sides when a receiver claims invalid DNA."""
+    await _broadcast_to_requester_side(
+        game, r,
+        {"type": "outgoing_update", "request": gm._request_view_for_requester(r)},
+    )
+    await _broadcast_to_decrypter_side(
+        game, r,
+        {"type": "invalid_flagged", "request": gm._request_view_for_decrypter(r)},
     )
 
 

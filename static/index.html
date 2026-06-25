@@ -106,6 +106,18 @@
   }
   .badge.you { background: var(--accent); color: #051018; border-color: var(--accent); }
   .badge.host { background: var(--warn); color: #1a1206; border-color: var(--warn); }
+  .score-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-weight: 600;
+    margin-left: 8px;
+  }
   .share-link {
     background: var(--panel-2);
     border: 1px solid var(--border);
@@ -386,6 +398,7 @@
           <th>Requester</th>
           <th>Decrypter</th>
           <th>DNA</th>
+          <th>Stakes</th>
           <th>Truth</th>
           <th>Submitted</th>
           <th>Valid?</th>
@@ -448,6 +461,7 @@ const state = {
   codonTable: {},
   players: [],
   teams: [],
+  score: null,
   mode: 'solo',
   outgoing: [],
   incoming: [],
@@ -479,6 +493,20 @@ function playerName(pid) {
 }
 function shareUrl() {
   return `${location.origin}/?game=${state.gameId}`;
+}
+function formatScore(value) {
+  const n = Number(value || 0);
+  return n.toFixed(1).replace(/\.0$/, '');
+}
+function scoreHtml() {
+  if (!state.score) return '';
+  const label = state.score.scope === 'team' ? `${state.score.name || 'Team'} score` : 'Score';
+  return `<span class="score-chip">${escapeHtml(label)}: ${formatScore(state.score.score)}</span>`;
+}
+function requestScaleLabel(r) {
+  const len = Number(r.sequence_aa_length || 0);
+  const mult = Number(r.point_multiplier || 1);
+  return `${len} aa · x${mult.toFixed(1)}`;
 }
 
 //======================================================================
@@ -539,6 +567,7 @@ function handleServerMessage(msg) {
       state.expectedPlayers = msg.expected_players;
       state.hostPlayerId = msg.host_player_id;
       state.codonTable = msg.codon_table;
+      state.score = msg.score || state.score;
       state.outgoing = msg.outgoing || [];
       state.incoming = msg.incoming || [];
       renderAll();
@@ -581,6 +610,15 @@ function handleServerMessage(msg) {
       toast(`${who} ${verb} the decryption of ${msg.request.protein_name}`,
             msg.decision === 'confirmed' ? 'var(--good)' : 'var(--bad)');
       break;
+    case 'invalid_flagged':
+      upsert(state.incoming, msg.request);
+      renderIncoming();
+      toast(`Invalid DNA flag submitted for ${msg.request.protein_name}`, 'var(--warn)');
+      break;
+    case 'score_update':
+      state.score = msg.score || state.score;
+      renderAll();
+      break;
     case 'game_ended':
       state.phase = 'ended';
       renderEnd(msg);
@@ -601,7 +639,7 @@ function upsert(list, item) {
 //======================================================================
 // Rendering
 //======================================================================
-function renderAll() {
+function renderHeader() {
   let metaText = '';
   if (state.gameId) {
     metaText = `Game ${state.gameId} · You: ${playerName(state.playerId)}`;
@@ -610,7 +648,11 @@ function renderAll() {
       if (t) metaText += ` · Team ${t.name}`;
     }
   }
-  $('header-meta').textContent = metaText;
+  $('header-meta').innerHTML = `${escapeHtml(metaText)}${scoreHtml()}`;
+}
+
+function renderAll() {
+  renderHeader();
   if (state.phase === 'lobby') {
     renderLobby();
     showScreen('screen-lobby');
@@ -634,6 +676,7 @@ function myTeamId() {
 }
 
 function renderLobby() {
+  renderHeader();
   $('share-link').textContent = shareUrl();
   $('lobby-count').textContent = `(${state.players.length} / ${state.expectedPlayers})`;
   const ul = $('lobby-players');
@@ -715,6 +758,7 @@ function statePill(s) {
     pending_approval: { label: 'Pending approval', cls: 'pending' },
     confirmed: { label: 'Confirmed', cls: 'confirmed' },
     rejected: { label: 'Rejected', cls: 'rejected' },
+    flagged_invalid: { label: 'Invalid flagged', cls: 'rejected' },
   };
   const x = labels[s] || { label: s, cls: '' };
   return `<span class="state-pill ${x.cls}">${x.label}</span>`;
@@ -728,7 +772,7 @@ function renderOutgoing() {
   }
   el.innerHTML = '';
   // Sort: pending_approval first (action needed), then awaiting, then resolved
-  const order = { pending_approval: 0, awaiting_decryption: 1, confirmed: 2, rejected: 2 };
+  const order = { pending_approval: 0, awaiting_decryption: 1, confirmed: 2, rejected: 2, flagged_invalid: 2 };
   const sorted = [...state.outgoing].sort((a, b) => order[a.state] - order[b.state]);
   for (const r of sorted) {
     const div = document.createElement('div');
@@ -754,8 +798,13 @@ function renderOutgoing() {
     if (state.mode === 'teams') {
       const initiated = playerName(r.requester_id);
       const parts = [`Sent by ${escapeHtml(initiated)}`];
-      if (r.submitted_by_id) parts.push(`their team: ${escapeHtml(playerName(r.submitted_by_id))} decrypted`);
-      if (r.resolved_by_id) parts.push(`${escapeHtml(playerName(r.resolved_by_id))} resolved`);
+      if (r.submitted_by_id) {
+        const action = r.state === 'flagged_invalid' ? 'flagged invalid' : 'decrypted';
+        parts.push(`their team: ${escapeHtml(playerName(r.submitted_by_id))} ${action}`);
+      }
+      if (r.resolved_by_id && r.state !== 'flagged_invalid') {
+        parts.push(`${escapeHtml(playerName(r.resolved_by_id))} resolved`);
+      }
       auditHtml = `<div class="meta">${parts.join(' · ')}</div>`;
     }
     div.innerHTML = `
@@ -763,6 +812,7 @@ function renderOutgoing() {
         <span>${escapeHtml(r.protein_name)} → ${escapeHtml(destLabel)}</span>
         ${statePill(r.state)}
       </div>
+      <div class="meta">${escapeHtml(requestScaleLabel(r))}</div>
       ${auditHtml}
       <div class="dna">${escapeHtml(r.dna_sequence)}</div>
       ${submittedHtml}
@@ -779,7 +829,7 @@ function renderIncoming() {
     return;
   }
   el.innerHTML = '';
-  const order = { awaiting_decryption: 0, pending_approval: 1, confirmed: 2, rejected: 2 };
+  const order = { awaiting_decryption: 0, pending_approval: 1, confirmed: 2, rejected: 2, flagged_invalid: 2 };
   const sorted = [...state.incoming].sort((a, b) => order[a.state] - order[b.state]);
   for (const r of sorted) {
     const div = document.createElement('div');
@@ -790,6 +840,7 @@ function renderIncoming() {
       action = `
         <div class="actions">
           <button onclick="openDecrypt('${r.id}', '${escapeAttr(r.protein_name)}')">Submit decryption</button>
+          <button class="secondary" onclick="flagInvalid('${r.id}')">Flag invalid</button>
         </div>`;
     } else if (r.submitted_peptide) {
       submittedHtml = `<div class="peptide">You submitted: ${escapeHtml(r.submitted_peptide)}</div>`;
@@ -804,7 +855,8 @@ function renderIncoming() {
       if (r.submitted_by_id) {
         const submitter = playerName(r.submitted_by_id);
         const youDid = r.submitted_by_id === state.playerId;
-        parts.push(youDid ? 'you submitted' : `${escapeHtml(submitter)} submitted`);
+        const action = r.state === 'flagged_invalid' ? 'flagged invalid' : 'submitted';
+        parts.push(youDid ? `you ${action}` : `${escapeHtml(submitter)} ${action}`);
       }
       auditHtml = `<div class="meta">${parts.join(' · ')}</div>`;
     }
@@ -817,6 +869,7 @@ function renderIncoming() {
         <span>${escapeHtml(r.protein_name)} ← ${escapeHtml(srcLabel)}</span>
         ${statePill(r.state)}
       </div>
+      <div class="meta">${escapeHtml(requestScaleLabel(r))}</div>
       <div class="dna">${escapeHtml(r.dna_sequence ?? '')}</div>
       ${auditHtml}
       ${submittedHtml}
@@ -844,7 +897,7 @@ function renderEnd(msg) {
       else if (i === 1) li.classList.add('silver');
       else if (i === 2) li.classList.add('bronze');
       const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
-      li.innerHTML = `<span><span style="display:inline-block;width:12px;height:12px;border-radius:50%;background:${t.color};margin-right:8px;vertical-align:middle"></span>${medal} ${escapeHtml(t.name)}</span><span class="pts">${t.score}</span>`;
+      li.innerHTML = `<span><span style="display:inline-block;width:12px;height:12px;border-radius:50%;background:${t.color};margin-right:8px;vertical-align:middle"></span>${medal} ${escapeHtml(t.name)}</span><span class="pts">${formatScore(t.score)}</span>`;
       sb.appendChild(li);
     });
     // Individual mini-scoreboard below (informational only — points are team-level)
@@ -870,7 +923,7 @@ function renderEnd(msg) {
       else if (i === 1) li.classList.add('silver');
       else if (i === 2) li.classList.add('bronze');
       const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
-      li.innerHTML = `<span>${medal} ${escapeHtml(p.name)}${p.id === state.playerId ? ' (you)' : ''}</span><span class="pts">${p.score}</span>`;
+      li.innerHTML = `<span>${medal} ${escapeHtml(p.name)}${p.id === state.playerId ? ' (you)' : ''}</span><span class="pts">${formatScore(p.score)}</span>`;
       sb.appendChild(li);
     });
   }
@@ -896,6 +949,7 @@ function renderEnd(msg) {
       <td>${reqCell}</td>
       <td>${decCell}</td>
       <td style="font-family:monospace">${escapeHtml(r.dna_sequence)}</td>
+      <td>${escapeHtml(requestScaleLabel(r))}</td>
       <td style="font-family:monospace">${escapeHtml(r.correct_peptide)}</td>
       <td class="${correctCls}" style="font-family:monospace">${r.submitted_peptide ? escapeHtml(r.submitted_peptide) : '—'}</td>
       <td class="${validCls}">${r.is_dna_valid ? 'yes' : 'no'}</td>
@@ -950,6 +1004,7 @@ function submitDecrypt() {
 
 function confirmReq(id) { send({ type: 'confirm_decryption', request_id: id }); }
 function rejectReq(id) { send({ type: 'reject_decryption', request_id: id }); }
+function flagInvalid(id) { send({ type: 'flag_invalid_request', request_id: id }); }
 
 //======================================================================
 // Landing & lobby setup
