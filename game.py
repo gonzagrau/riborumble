@@ -59,6 +59,7 @@ POINTS_END_AWAITING = -2        # decrypter penalized for undecrypted request at
 POINTS_END_PENDING = +2         # decrypter rewarded for unresolved submission at game end
 
 MAX_PLAYER_NAME_LENGTH = 40
+MAX_EXPECTED_PLAYERS = 100
 MAX_TEAM_NAME_LENGTH = 32
 MAX_PROTEIN_NAME_LENGTH = 60
 MAX_DNA_LENGTH = 300
@@ -115,7 +116,7 @@ class Game:
     id: str
     host_player_id: str
     expected_players: int
-    end_window_seconds: tuple[float, float]
+    duration_seconds: float
     codon_table: dict[str, str]
     mode: Mode = Mode.SOLO
     phase: Phase = Phase.LOBBY
@@ -284,7 +285,7 @@ def _clean_team_color(value: str) -> str:
 def new_game(
     host_name: str,
     expected_players: int,
-    end_window_minutes: tuple[float, float],
+    game_duration_minutes: float | tuple[float, float],
     codon_table: dict[str, str] | None = None,
     mode: Mode = Mode.SOLO,
     teams: list[dict[str, str]] | None = None,
@@ -298,9 +299,9 @@ def new_game(
     """
     if expected_players < 2:
         raise ValueError("Need at least 2 players")
-    lo, hi = end_window_minutes
-    if not (0 < lo <= hi):
-        raise ValueError("Invalid end window")
+    if expected_players > MAX_EXPECTED_PLAYERS:
+        raise ValueError(f"Need at most {MAX_EXPECTED_PLAYERS} players")
+    duration_minutes = _clean_game_duration_minutes(game_duration_minutes)
     host = Player(
         id=_new_id("p"),
         name=_clean_text(host_name, "Host name", MAX_PLAYER_NAME_LENGTH),
@@ -310,7 +311,7 @@ def new_game(
         id=_new_id("g"),
         host_player_id=host.id,
         expected_players=expected_players,
-        end_window_seconds=(lo * 60, hi * 60),
+        duration_seconds=duration_minutes * 60,
         codon_table=normalize_codon_table(codon_table or dict(DEFAULT_CODON_TABLE)),
         mode=mode,
     )
@@ -330,6 +331,22 @@ def new_game(
 
     game.players[host.id] = host
     return game, host
+
+
+def _clean_game_duration_minutes(value: float | tuple[float, float]) -> float:
+    """Return one fixed positive duration in minutes."""
+    if isinstance(value, tuple):
+        lo, hi = value
+        if lo != hi:
+            raise ValueError("Game duration must be a single fixed number of minutes")
+        value = lo
+    try:
+        duration = float(value)
+    except (TypeError, ValueError):
+        raise ValueError("Invalid game duration")
+    if duration <= 0:
+        raise ValueError("Invalid game duration")
+    return duration
 
 
 def join_game(game: Game, name: str) -> Player:
@@ -371,9 +388,9 @@ def assign_team(game: Game, player_id: str, team_id: str | None) -> Player:
 
 def start_game(game: Game, by_player_id: str) -> float:
     """
-    Host transitions the game to IN_PROGRESS and a random end time is
-    chosen within the configured window. Returns the absolute end
-    timestamp so the web layer can schedule the ender.
+    Host transitions the game to IN_PROGRESS and schedules the exact
+    configured stop time. Returns the absolute end timestamp so the web
+    layer can schedule the ender.
     """
     if by_player_id != game.host_player_id:
         raise PermissionError("Only the host can start the game")
@@ -395,12 +412,10 @@ def start_game(game: Game, by_player_id: str) -> float:
         if empty:
             raise ValueError(f"Empty teams: {', '.join(empty)}")
 
-    lo, hi = game.end_window_seconds
-    duration = secrets.SystemRandom().uniform(lo, hi)
     now = time.time()
     game.phase = Phase.IN_PROGRESS
     game.started_at = now
-    game.scheduled_end_at = now + duration
+    game.scheduled_end_at = now + game.duration_seconds
     return game.scheduled_end_at
 
 

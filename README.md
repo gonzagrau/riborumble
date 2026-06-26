@@ -72,11 +72,11 @@ Two key consequences:
 
 ### When the game ends
 
-The host configures a window (e.g. 15–25 minutes). At game start the
-server picks a random instant within that window and schedules the
-guillotine. When it fires, all pending requests are swept according to
-the rules above, scores are revealed, and every request — including
-its true peptide and the validity flag — is shown to everyone.
+The host configures a fixed duration (e.g. 15 minutes). At game start the
+server schedules the guillotine for exactly that many minutes later. When
+it fires, all pending requests are swept according to the rules above,
+scores are revealed, and every request — including its true peptide and
+the validity flag — is shown to everyone.
 
 ### Team mode
 
@@ -171,12 +171,13 @@ Environment variables read by `main.py`:
   ended games in memory until restart)
 
 Game-time configuration (set when creating the game in the UI):
-- Number of players (2–20)
-- End window in minutes (min, max)
+- Number of players (2–100)
+- Game duration in minutes
 - Codon table (defaults provided, override via the API)
 
 Runtime limits:
 - Player names: 40 characters
+- Players per game: 100
 - Team names: 32 characters
 - Protein names: 60 characters
 - DNA requests: 300 bases after whitespace removal

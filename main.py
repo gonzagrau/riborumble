@@ -50,8 +50,9 @@ class TeamSpec(BaseModel):
 
 class CreateGameBody(BaseModel):
     host_name: str = Field(min_length=1, max_length=gm.MAX_PLAYER_NAME_LENGTH)
-    expected_players: int = Field(ge=2, le=20)
-    end_window_minutes: tuple[float, float] = (15.0, 25.0)
+    expected_players: int = Field(ge=2, le=gm.MAX_EXPECTED_PLAYERS)
+    game_duration_minutes: float = Field(default=15.0, gt=0)
+    end_window_minutes: tuple[float, float] | None = None
     codon_table: dict[str, str] | None = Field(default=None, max_length=64)
     mode: str = "solo"  # "solo" or "teams"
     teams: list[TeamSpec] | None = None
@@ -72,10 +73,11 @@ async def create_game(body: CreateGameBody) -> dict[str, Any]:
         except ValueError:
             raise HTTPException(400, f"Invalid mode: {body.mode}")
         try:
+            duration_minutes = _duration_minutes_from_body(body)
             game, host = gm.new_game(
                 host_name=body.host_name,
                 expected_players=body.expected_players,
-                end_window_minutes=body.end_window_minutes,
+                game_duration_minutes=duration_minutes,
                 codon_table=body.codon_table or dict(DEFAULT_CODON_TABLE),
                 mode=mode,
                 teams=[t.model_dump() for t in body.teams] if body.teams else None,
@@ -84,14 +86,15 @@ async def create_game(body: CreateGameBody) -> dict[str, Any]:
             raise HTTPException(400, str(e))
         GAMES[game.id] = game
         log.info(
-            "Created game %s (host=%s, expect=%d, mode=%s)",
-            game.id, host.name, body.expected_players, mode.value,
+            "Created game %s (host=%s, expect=%d, mode=%s, duration=%.1fm)",
+            game.id, host.name, body.expected_players, mode.value, duration_minutes,
         )
         return {
             "game_id": game.id,
             "player_id": host.id,
             "host_player_id": host.id,
             "expected_players": game.expected_players,
+            "game_duration_minutes": game.duration_seconds / 60,
             "codon_table": game.codon_table,
             "mode": game.mode.value,
             "teams": [gm._team_view(t) for t in game.teams.values()],
@@ -116,6 +119,7 @@ async def join_game(game_id: str, body: JoinGameBody) -> dict[str, Any]:
             "player_id": player.id,
             "host_player_id": game.host_player_id,
             "expected_players": game.expected_players,
+            "game_duration_minutes": game.duration_seconds / 60,
             "codon_table": game.codon_table,
             "mode": game.mode.value,
             "teams": [gm._team_view(t) for t in game.teams.values()],
@@ -131,6 +135,16 @@ async def get_codon_table(game_id: str) -> dict[str, str]:
 
 
 # --- WebSocket ------------------------------------------------------------
+
+
+def _duration_minutes_from_body(body: CreateGameBody) -> float:
+    """Prefer the fixed duration field; accept exact legacy tuples only."""
+    if "game_duration_minutes" in body.model_fields_set or body.end_window_minutes is None:
+        return body.game_duration_minutes
+    lo, hi = body.end_window_minutes
+    if lo != hi:
+        raise ValueError("Game duration must be a single fixed number of minutes")
+    return lo
 
 
 @app.websocket("/ws/{game_id}")
@@ -497,6 +511,12 @@ if SOUNDS_DIR.exists():
 @app.get("/")
 async def index() -> FileResponse:
     return FileResponse(str(STATIC_DIR / "index.html"))
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+@app.head("/favicon.ico", include_in_schema=False)
+async def favicon() -> FileResponse:
+    return FileResponse(str(STATIC_DIR / "favicon.png"), media_type="image/png")
 
 
 @app.get("/healthz")

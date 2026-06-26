@@ -23,6 +23,10 @@ class StaticFrontendTests(unittest.TestCase):
             "sequence_aa_length",
             "screen-end",
             "safeColor",
+            "rel=\"icon\" type=\"image/png\" href=\"/static/favicon.png\"",
+            "id=\"expected-players\" type=\"number\" min=\"2\" max=\"100\"",
+            "id=\"game-duration\"",
+            "game_duration_minutes",
             "sound_effect",
             "playSound('notification')",
             "playSound('game_over')",
@@ -35,6 +39,21 @@ class StaticFrontendTests(unittest.TestCase):
         for snippet in required_snippets:
             with self.subTest(snippet=snippet):
                 self.assertIn(snippet, html)
+
+        obsolete_snippets = [
+            "End window",
+            "end_window_minutes",
+            "id=\"end-min\"",
+            "id=\"end-max\"",
+            "colors auto-assigned",
+            "More teams",
+            "assigned randomly",
+            "DNA shown in app",
+            "Use the DNA shown",
+        ]
+        for snippet in obsolete_snippets:
+            with self.subTest(obsolete=snippet):
+                self.assertNotIn(snippet, html)
 
     def test_dynamic_request_controls_do_not_use_inline_click_handlers(self):
         html = INDEX.read_text(encoding="utf-8")

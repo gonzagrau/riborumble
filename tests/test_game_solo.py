@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 import game as gm
 
@@ -18,13 +19,15 @@ def submit_assigned(game, request, guess):
 class SoloLifecycleTests(unittest.TestCase):
     def test_new_game_validates_inputs(self):
         with self.assertRaisesRegex(ValueError, "Need at least 2 players"):
-            gm.new_game("Alice", 1, (1, 1))
-        with self.assertRaisesRegex(ValueError, "Invalid end window"):
-            gm.new_game("Alice", 2, (0, 1))
-        with self.assertRaisesRegex(ValueError, "Invalid end window"):
-            gm.new_game("Alice", 2, (2, 1))
+            gm.new_game("Alice", 1, 1)
+        with self.assertRaisesRegex(ValueError, "Need at most 100 players"):
+            gm.new_game("Alice", 101, 1)
+        with self.assertRaisesRegex(ValueError, "Invalid game duration"):
+            gm.new_game("Alice", 2, 0)
+        with self.assertRaisesRegex(ValueError, "single fixed"):
+            gm.new_game("Alice", 2, (1, 2))
         with self.assertRaisesRegex(ValueError, "Host name required"):
-            gm.new_game("   ", 2, (1, 1))
+            gm.new_game("   ", 2, 1)
 
     def test_join_game_handles_rejoin_capacity_and_started_game(self):
         game, alice = gm.new_game("Alice", 2, (1, 1))
@@ -39,16 +42,18 @@ class SoloLifecycleTests(unittest.TestCase):
             gm.join_game(game, "Dana")
 
     def test_start_game_requires_host_lobby_and_expected_players(self):
-        game, alice = gm.new_game("Alice", 3, (1, 1))
+        game, alice = gm.new_game("Alice", 3, 5)
         bob = gm.join_game(game, "Bob")
         with self.assertRaisesRegex(PermissionError, "Only the host"):
             gm.start_game(game, bob.id)
         with self.assertRaisesRegex(ValueError, "Waiting for players"):
             gm.start_game(game, alice.id)
         gm.join_game(game, "Cara")
-        end_at = gm.start_game(game, alice.id)
+        with patch("game.time.time", return_value=1000.0):
+            end_at = gm.start_game(game, alice.id)
         self.assertEqual(game.phase, gm.Phase.IN_PROGRESS)
-        self.assertIsNotNone(game.started_at)
+        self.assertEqual(game.started_at, 1000.0)
+        self.assertEqual(end_at, 1300.0)
         self.assertEqual(end_at, game.scheduled_end_at)
         with self.assertRaisesRegex(ValueError, "Game already started"):
             gm.start_game(game, alice.id)

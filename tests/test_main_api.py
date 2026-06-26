@@ -2,6 +2,7 @@ import unittest
 
 try:
     from fastapi import HTTPException
+    from pydantic import ValidationError
     from starlette.websockets import WebSocketDisconnect
 except ModuleNotFoundError as exc:
     raise unittest.SkipTest("FastAPI is not installed") from exc
@@ -36,7 +37,7 @@ class MainApiTests(unittest.IsolatedAsyncioTestCase):
             main.CreateGameBody(
                 host_name="Host",
                 expected_players=2,
-                end_window_minutes=(1, 2),
+                game_duration_minutes=5,
             )
         )
 
@@ -45,6 +46,8 @@ class MainApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response["player_id"], game.host_player_id)
         self.assertEqual(response["host_player_id"], game.host_player_id)
         self.assertEqual(response["expected_players"], 2)
+        self.assertEqual(response["game_duration_minutes"], 5)
+        self.assertEqual(game.duration_seconds, 300)
         self.assertEqual(response["mode"], "solo")
         self.assertEqual(response["codon_table"], game.codon_table)
         self.assertEqual(response["teams"], [])
@@ -56,6 +59,20 @@ class MainApiTests(unittest.IsolatedAsyncioTestCase):
             )
         self.assertEqual(bad_mode.exception.status_code, 400)
         self.assertIn("Invalid mode", bad_mode.exception.detail)
+
+        with self.assertRaises(HTTPException) as bad_duration:
+            await main.create_game(
+                main.CreateGameBody(
+                    host_name="Host",
+                    expected_players=2,
+                    end_window_minutes=(1, 2),
+                )
+            )
+        self.assertEqual(bad_duration.exception.status_code, 400)
+        self.assertIn("single fixed", bad_duration.exception.detail)
+
+        with self.assertRaises(ValidationError):
+            main.CreateGameBody(host_name="Host", expected_players=101)
 
         with self.assertRaises(HTTPException) as bad_teams:
             await main.create_game(
@@ -136,6 +153,12 @@ class MainApiTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(HTTPException) as missing:
             await main.get_codon_table("g_missing")
         self.assertEqual(missing.exception.status_code, 404)
+
+    async def test_favicon_route_serves_png_asset(self):
+        response = await main.favicon()
+
+        self.assertTrue(response.path.endswith("static/favicon.png"))
+        self.assertEqual(response.media_type, "image/png")
 
     async def test_broadcast_scores_sends_private_payload_to_each_socket(self):
         game, host = gm.new_game(
