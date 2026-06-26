@@ -36,7 +36,6 @@ class MainApiTests(unittest.IsolatedAsyncioTestCase):
         response = await main.create_game(
             main.CreateGameBody(
                 host_name="Host",
-                expected_players=2,
                 game_duration_minutes=5,
             )
         )
@@ -45,7 +44,7 @@ class MainApiTests(unittest.IsolatedAsyncioTestCase):
         game = main.GAMES[response["game_id"]]
         self.assertEqual(response["player_id"], game.host_player_id)
         self.assertEqual(response["host_player_id"], game.host_player_id)
-        self.assertEqual(response["expected_players"], 2)
+        self.assertEqual(response["expected_players"], gm.MAX_EXPECTED_PLAYERS)
         self.assertEqual(response["game_duration_minutes"], 5)
         self.assertEqual(game.duration_seconds, 300)
         self.assertEqual(response["mode"], "solo")
@@ -55,7 +54,7 @@ class MainApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_create_game_endpoint_validates_mode_and_game_rules(self):
         with self.assertRaises(HTTPException) as bad_mode:
             await main.create_game(
-                main.CreateGameBody(host_name="Host", expected_players=2, mode="duo")
+                main.CreateGameBody(host_name="Host", mode="duo")
             )
         self.assertEqual(bad_mode.exception.status_code, 400)
         self.assertIn("Invalid mode", bad_mode.exception.detail)
@@ -64,7 +63,6 @@ class MainApiTests(unittest.IsolatedAsyncioTestCase):
             await main.create_game(
                 main.CreateGameBody(
                     host_name="Host",
-                    expected_players=2,
                     end_window_minutes=(1, 2),
                 )
             )
@@ -78,7 +76,6 @@ class MainApiTests(unittest.IsolatedAsyncioTestCase):
             await main.create_game(
                 main.CreateGameBody(
                     host_name="Host",
-                    expected_players=2,
                     mode="teams",
                     teams=[main.TeamSpec(name="Only One")],
                 )
@@ -90,7 +87,6 @@ class MainApiTests(unittest.IsolatedAsyncioTestCase):
             await main.create_game(
                 main.CreateGameBody(
                     host_name="Host",
-                    expected_players=2,
                     codon_table={"ATG": "NotAnAA"},
                 )
             )
@@ -101,7 +97,6 @@ class MainApiTests(unittest.IsolatedAsyncioTestCase):
         response = await main.create_game(
             main.CreateGameBody(
                 host_name="Host",
-                expected_players=2,
                 mode="teams",
                 teams=[
                     main.TeamSpec(name="Red", color="#f00"),
@@ -116,7 +111,7 @@ class MainApiTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_join_endpoint_adds_player_and_rejoin_returns_same_identity(self):
         created = await main.create_game(
-            main.CreateGameBody(host_name="Host", expected_players=2)
+            main.CreateGameBody(host_name="Host")
         )
         joined = await main.join_game(created["game_id"], main.JoinGameBody(name="Bob"))
         rejoined = await main.join_game(created["game_id"], main.JoinGameBody(name="bob"))
@@ -126,23 +121,21 @@ class MainApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(joined["host_player_id"], created["host_player_id"])
         self.assertEqual(joined["mode"], "solo")
 
-    async def test_join_endpoint_404s_missing_game_and_400s_full_game(self):
+    async def test_join_endpoint_404s_missing_game_and_allows_dynamic_lobby_size(self):
         with self.assertRaises(HTTPException) as missing:
             await main.join_game("g_missing", main.JoinGameBody(name="Bob"))
         self.assertEqual(missing.exception.status_code, 404)
 
         created = await main.create_game(
-            main.CreateGameBody(host_name="Host", expected_players=2)
+            main.CreateGameBody(host_name="Host")
         )
         await main.join_game(created["game_id"], main.JoinGameBody(name="Bob"))
-        with self.assertRaises(HTTPException) as full:
-            await main.join_game(created["game_id"], main.JoinGameBody(name="Cara"))
-        self.assertEqual(full.exception.status_code, 400)
-        self.assertIn("Game is full", full.exception.detail)
+        joined = await main.join_game(created["game_id"], main.JoinGameBody(name="Cara"))
+        self.assertIn(joined["player_id"], main.GAMES[created["game_id"]].players)
 
     async def test_get_codon_table_and_healthz(self):
         created = await main.create_game(
-            main.CreateGameBody(host_name="Host", expected_players=2)
+            main.CreateGameBody(host_name="Host")
         )
         self.assertEqual(
             await main.get_codon_table(created["game_id"]),

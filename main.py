@@ -50,7 +50,7 @@ class TeamSpec(BaseModel):
 
 class CreateGameBody(BaseModel):
     host_name: str = Field(min_length=1, max_length=gm.MAX_PLAYER_NAME_LENGTH)
-    expected_players: int = Field(ge=2, le=gm.MAX_EXPECTED_PLAYERS)
+    expected_players: int | None = Field(default=None, ge=2, le=gm.MAX_EXPECTED_PLAYERS)
     game_duration_minutes: float = Field(default=15.0, gt=0)
     end_window_minutes: tuple[float, float] | None = None
     codon_table: dict[str, str] | None = Field(default=None, max_length=64)
@@ -74,9 +74,10 @@ async def create_game(body: CreateGameBody) -> dict[str, Any]:
             raise HTTPException(400, f"Invalid mode: {body.mode}")
         try:
             duration_minutes = _duration_minutes_from_body(body)
+            max_players = body.expected_players or gm.MAX_EXPECTED_PLAYERS
             game, host = gm.new_game(
                 host_name=body.host_name,
-                expected_players=body.expected_players,
+                expected_players=max_players,
                 game_duration_minutes=duration_minutes,
                 codon_table=body.codon_table or dict(DEFAULT_CODON_TABLE),
                 mode=mode,
@@ -86,8 +87,8 @@ async def create_game(body: CreateGameBody) -> dict[str, Any]:
             raise HTTPException(400, str(e))
         GAMES[game.id] = game
         log.info(
-            "Created game %s (host=%s, expect=%d, mode=%s, duration=%.1fm)",
-            game.id, host.name, body.expected_players, mode.value, duration_minutes,
+            "Created game %s (host=%s, max=%d, mode=%s, duration=%.1fm)",
+            game.id, host.name, max_players, mode.value, duration_minutes,
         )
         return {
             "game_id": game.id,
@@ -270,33 +271,24 @@ async def _handle_client_message(
                 )
 
             elif mtype == "confirm_decryption":
-                r, _ = gm.confirm_decryption(game, player_id, msg["request_id"])
-                decision_was_correct = r.is_dna_valid and bool(r.submitted_peptide_is_correct)
+                r, deltas = gm.confirm_decryption(game, player_id, msg["request_id"])
                 post_actions.append(("decision", r, "confirmed"))
-                post_actions.append(
-                    ("sound", [player_id], "correct" if decision_was_correct else "wrong")
-                )
-                post_actions.append(("sound", _request_decrypter_actor_ids(r), "correct"))
+                post_actions.append(("sound_from_deltas", [player_id], deltas))
+                post_actions.append(("sound_from_deltas", _request_decrypter_actor_ids(r), deltas))
                 post_actions.append(("scores", None))
 
             elif mtype == "reject_decryption":
-                r, _ = gm.reject_decryption(game, player_id, msg["request_id"])
-                decision_was_correct = r.is_dna_valid and not bool(r.submitted_peptide_is_correct)
+                r, deltas = gm.reject_decryption(game, player_id, msg["request_id"])
                 post_actions.append(("decision", r, "rejected"))
-                post_actions.append(
-                    ("sound", [player_id], "correct" if decision_was_correct else "wrong")
-                )
+                post_actions.append(("sound_from_deltas", [player_id], deltas))
+                post_actions.append(("sound_from_deltas", _request_decrypter_actor_ids(r), deltas))
                 post_actions.append(("scores", None))
 
             elif mtype == "flag_invalid_request":
-                r, _ = gm.flag_invalid_request(game, player_id, msg["request_id"])
-                flag_was_correct = not r.is_dna_valid
+                r, deltas = gm.flag_invalid_request(game, player_id, msg["request_id"])
                 post_actions.append(("invalid_flag", r))
-                post_actions.append(
-                    ("sound", [player_id], "correct" if flag_was_correct else "wrong")
-                )
-                if flag_was_correct:
-                    post_actions.append(("sound", [r.requester_id], "wrong"))
+                post_actions.append(("sound_from_deltas", [player_id], deltas))
+                post_actions.append(("sound_from_deltas", [r.requester_id], deltas))
                 post_actions.append(("scores", None))
 
             else:
@@ -330,6 +322,9 @@ async def _handle_client_message(
         elif kind == "sound":
             _, player_ids, sound = action
             await _broadcast_sound(game, player_ids, sound)
+        elif kind == "sound_from_deltas":
+            _, player_ids, deltas = action
+            await _broadcast_sound_from_deltas(game, player_ids, deltas)
         elif kind == "direct_error":
             await ws.send_json({"type": "error", "message": action[1]})
 
@@ -360,6 +355,27 @@ async def _broadcast_sound(game: gm.Game, player_ids: list[str], sound: str) -> 
     payload = {"type": "sound_effect", "sound": sound}
     for player_id in dict.fromkeys(pid for pid in player_ids if pid in game.players):
         await _broadcast_to(game, player_id, payload)
+
+
+async def _broadcast_sound_from_deltas(
+    game: gm.Game, player_ids: list[str], deltas: list[tuple[str, float]]
+) -> None:
+    for player_id in dict.fromkeys(pid for pid in player_ids if pid in game.players):
+        total = _player_delta_total(game, player_id, deltas)
+        if total > 0:
+            await _broadcast_to(game, player_id, {"type": "sound_effect", "sound": "correct"})
+        elif total < 0:
+            await _broadcast_to(game, player_id, {"type": "sound_effect", "sound": "wrong"})
+
+
+def _player_delta_total(
+    game: gm.Game, player_id: str, deltas: list[tuple[str, float]]
+) -> float:
+    if game.mode == gm.Mode.TEAMS:
+        target_id = game.players[player_id].team_id
+    else:
+        target_id = player_id
+    return round(sum(delta for credited_id, delta in deltas if credited_id == target_id), 1)
 
 
 def _request_decrypter_actor_ids(r: gm.Request) -> list[str]:

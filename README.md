@@ -34,11 +34,11 @@ So a 5-amino-acid request has `m = 1.5`, and a base `+3` becomes `+4.5`.
 | Requester's call | DNA | Submission | Decrypter | Requester |
 |---|---|---|---|---|
 | Confirm | valid | correct | **+3m** | **+1m** |
-| Confirm | valid | wrong | **+3m** | **−2m** |
-| Confirm | invalid | (any) | **+3m** | **−2m** |
-| Reject | valid | correct | **−3m** | **−2m** |
-| Reject | valid | wrong | **−3m** | 0 |
-| Reject | invalid | (any) | **+1m** | **−3m** |
+| Confirm | valid | wrong | **−3m** | **−3m** |
+| Confirm | invalid | peptide submitted | **−3m** | **−6m** |
+| Reject | valid | correct | **+3m** | **−3m** |
+| Reject | valid | wrong | **−3m** | **+1m** |
+| Reject | invalid | peptide submitted | **−3m** | **−2m** |
 
 Receiver-side invalid flag:
 
@@ -52,20 +52,21 @@ At game end (sweep):
 | Pending state | Effect |
 |---|---|
 | Request never decrypted | Decrypter **−2m** |
-| Submission never resolved | Decrypter **+2m** |
+| Invalid request never decrypted | Decrypter **−2m**, requester **−3m** |
+| Correct submission never resolved | Decrypter **+2m**, requester **−2m** |
+| Wrong submission never resolved | Decrypter **−2m**, requester **−2m** |
+| Invalid request with unresolved peptide submission | Decrypter **−2m**, requester **−5m** |
 
 Two key consequences:
-- A wrongly-decrypted answer is worth **+2m** if the requester forgets to
-  reject in time. Sit on bad guesses; the clock is your friend.
-- Conversely, the requester is *also* on the clock: forgetting to confirm
-  a correct answer leaks +2m to the decrypter you wanted to deny.
-- Requesters earn **+1m** for confirming a valid correct translation, so
-  well-formed requests can build their score instead of just creating work.
+- Decryption is graded against the truth, not against the requester's
+  decision. A correct peptide is worth **+3m** even if rejected; a wrong
+  peptide costs **−3m** even if accepted.
+- Requester QC is graded separately. Good QC is worth **+1m**; bad QC
+  costs **−3m**.
+- Sending invalid DNA carries its own **−3m** penalty. If the sender also
+  accepts a bogus peptide for that invalid request, both mistakes count.
 - Decrypters can flag invalid DNA directly. Correct flags earn **+1m**
   and punish the sender; false flags cost the decrypter **−3m**.
-- The requester is graded too. Confirming a wrong answer or rejecting a
-  correct one costs the requester **−2m** on top of whatever happens to
-  the decrypter. Pay attention — careless judgments are punished.
 - The server silently knows the truth but does not reveal the true peptide
   or validity flag during the game. Live score changes can still expose
   the consequence of a decision to the affected player/team.
@@ -171,7 +172,6 @@ Environment variables read by `main.py`:
   ended games in memory until restart)
 
 Game-time configuration (set when creating the game in the UI):
-- Number of players (2–100)
 - Game duration in minutes
 - Codon table (defaults provided, override via the API)
 

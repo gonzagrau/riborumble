@@ -464,8 +464,6 @@
       <div id="create-form">
         <label>Your name</label>
         <input id="host-name" placeholder="Alice" autocomplete="off" />
-        <label>Number of players</label>
-        <input id="expected-players" type="number" min="2" max="100" value="3" />
         <label>Game duration (minutes)</label>
         <input id="game-duration" type="number" min="0.5" step="0.5" value="15" />
         <label>Mode</label>
@@ -604,7 +602,6 @@ const state = {
   gameId: null,
   playerId: null,
   hostPlayerId: null,
-  expectedPlayers: 0,
   codonTable: {},
   players: [],
   teams: [],
@@ -760,7 +757,6 @@ function handleServerMessage(msg) {
       state.players = msg.players;
       state.teams = msg.teams || [];
       state.mode = msg.mode || 'solo';
-      state.expectedPlayers = msg.expected_players;
       state.hostPlayerId = msg.host_player_id;
       state.codonTable = msg.codon_table;
       state.score = msg.score || state.score;
@@ -773,7 +769,6 @@ function handleServerMessage(msg) {
       state.players = msg.players;
       state.teams = msg.teams || state.teams;
       state.mode = msg.mode || state.mode;
-      state.expectedPlayers = msg.expected_players;
       state.hostPlayerId = msg.host_player_id;
       renderLobby();
       if (state.phase === 'lobby') showScreen('screen-lobby');
@@ -890,7 +885,7 @@ function myTeamId() {
 function renderLobby() {
   renderHeader();
   $('share-link').textContent = shareUrl();
-  $('lobby-count').textContent = `(${state.players.length} / ${state.expectedPlayers})`;
+  $('lobby-count').textContent = `(${state.players.length})`;
   const ul = $('lobby-players');
   ul.innerHTML = '';
   for (const p of state.players) {
@@ -931,26 +926,23 @@ function renderLobby() {
   }
   // Start button visibility & readiness
   const isHost = state.playerId === state.hostPlayerId;
-  let ready = state.players.length >= state.expectedPlayers;
-  let waitingMsg = ready ? '' : 'Waiting for all players to join.';
+  let ready = state.players.length >= 2;
+  let waitingMsg = ready ? '' : 'Need at least 2 players.';
   if (ready && state.mode === 'teams') {
     const unassigned = state.players.filter(p => !p.team_id);
-    const perTeam = {};
-    for (const t of state.teams) perTeam[t.id] = 0;
-    for (const p of state.players) if (p.team_id) perTeam[p.team_id] = (perTeam[p.team_id] || 0) + 1;
-    const emptyTeams = state.teams.filter(t => !perTeam[t.id]);
+    const occupiedTeamIds = new Set(state.players.map(p => p.team_id).filter(Boolean));
     if (unassigned.length) {
       ready = false;
       waitingMsg = `${unassigned.length} player(s) haven't picked a team.`;
-    } else if (emptyTeams.length) {
+    } else if (occupiedTeamIds.size < 2) {
       ready = false;
-      waitingMsg = `Empty team(s): ${emptyTeams.map(t => t.name).join(', ')}.`;
+      waitingMsg = 'Need at least 2 teams.';
     }
   }
   const btn = $('btn-start');
   btn.style.display = isHost ? 'block' : 'none';
   btn.disabled = !ready;
-  btn.textContent = ready ? 'Start game' : `Waiting (${state.players.length}/${state.expectedPlayers})`;
+  btn.textContent = ready ? 'Start game' : 'Waiting';
   $('lobby-status').textContent = isHost
     ? waitingMsg
     : (ready ? 'Waiting for host to start.' : waitingMsg);
@@ -1260,7 +1252,6 @@ function setupLanding() {
     try {
       const body = {
         host_name: $('host-name').value.trim(),
-        expected_players: parseInt($('expected-players').value, 10),
         game_duration_minutes: parseFloat($('game-duration').value),
         mode: createMode,
       };
@@ -1270,15 +1261,11 @@ function setupLanding() {
         if (names.length < 2) throw new Error('Need at least 2 team names');
         const palette = ['#f85149', '#58a6ff', '#3fb950', '#d29922', '#a371f7', '#ec6cb9'];
         body.teams = names.map((n, i) => ({ name: n, color: palette[i % palette.length] }));
-        if (body.expected_players < names.length) {
-          throw new Error('Need at least as many players as teams');
-        }
       }
       const r = await api('/api/games', body);
       state.gameId = r.game_id;
       state.playerId = r.player_id;
       state.hostPlayerId = r.host_player_id;
-      state.expectedPlayers = r.expected_players;
       state.codonTable = r.codon_table;
       state.mode = r.mode || 'solo';
       state.teams = r.teams || [];
@@ -1297,7 +1284,6 @@ function setupLanding() {
       state.gameId = r.game_id;
       state.playerId = r.player_id;
       state.hostPlayerId = r.host_player_id;
-      state.expectedPlayers = r.expected_players;
       state.codonTable = r.codon_table;
       state.mode = r.mode || 'solo';
       state.teams = r.teams || [];

@@ -33,22 +33,21 @@ class SoloLifecycleTests(unittest.TestCase):
         game, alice = gm.new_game("Alice", 2, (1, 1))
         bob = gm.join_game(game, "Bob")
         self.assertIs(gm.join_game(game, "bob"), bob)
-        with self.assertRaisesRegex(ValueError, "Game is full"):
-            gm.join_game(game, "Cara")
+        cara = gm.join_game(game, "Cara")
+        self.assertEqual(cara.name, "Cara")
 
         gm.start_game(game, alice.id)
         self.assertIs(gm.join_game(game, "ALICE"), alice)
         with self.assertRaisesRegex(ValueError, "Game already started"):
             gm.join_game(game, "Dana")
 
-    def test_start_game_requires_host_lobby_and_expected_players(self):
+    def test_start_game_requires_host_lobby_and_two_players(self):
         game, alice = gm.new_game("Alice", 3, 5)
+        with self.assertRaisesRegex(ValueError, "Need at least 2 players"):
+            gm.start_game(game, alice.id)
         bob = gm.join_game(game, "Bob")
         with self.assertRaisesRegex(PermissionError, "Only the host"):
             gm.start_game(game, bob.id)
-        with self.assertRaisesRegex(ValueError, "Waiting for players"):
-            gm.start_game(game, alice.id)
-        gm.join_game(game, "Cara")
         with patch("game.time.time", return_value=1000.0):
             end_at = gm.start_game(game, alice.id)
         self.assertEqual(game.phase, gm.Phase.IN_PROGRESS)
@@ -170,16 +169,16 @@ class SoloScoringTableTests(unittest.TestCase):
         self.assertEqual(deltas, [(bob.id, 3.9), (alice.id, 1.3)])
         self.assert_scores(game, {"Alice": 1.3, "Bob": 3.9})
 
-    def test_confirm_valid_wrong_rewards_decrypter_and_penalizes_requester(self):
+    def test_confirm_valid_wrong_penalizes_both_sides(self):
         game, alice, bob = make_started_solo_game()
         request = gm.create_request(game, alice.id, "Protein", "ATGGTTTAA")
         submit_assigned(game, request, "Met-Val-Phe")
         _, deltas = gm.confirm_decryption(game, alice.id, request.id)
 
-        self.assertEqual(deltas, [(bob.id, 3.9), (alice.id, -2.6)])
-        self.assert_scores(game, {"Alice": -2.6, "Bob": 3.9})
+        self.assertEqual(deltas, [(bob.id, -3.9), (alice.id, -3.9)])
+        self.assert_scores(game, {"Alice": -3.9, "Bob": -3.9})
 
-    def test_confirm_invalid_rewards_decrypter_and_penalizes_requester(self):
+    def test_confirm_invalid_penalizes_missed_invalid_and_bad_accept(self):
         game, alice, bob = make_started_solo_game()
         request = gm.create_request(game, alice.id, "Bad Protein", "ATGZZZ")
         submit_assigned(game, request, "Met ?")
@@ -187,36 +186,36 @@ class SoloScoringTableTests(unittest.TestCase):
 
         self.assertFalse(request.is_dna_valid)
         self.assertEqual(request.point_multiplier, 1.2)
-        self.assertEqual(deltas, [(bob.id, 3.6), (alice.id, -2.4)])
-        self.assert_scores(game, {"Alice": -2.4, "Bob": 3.6})
+        self.assertEqual(deltas, [(bob.id, -3.6), (alice.id, -7.2)])
+        self.assert_scores(game, {"Alice": -7.2, "Bob": -3.6})
 
-    def test_reject_valid_correct_penalizes_both_sides(self):
+    def test_reject_valid_correct_rewards_decrypter_and_penalizes_requester(self):
         game, alice, bob = make_started_solo_game()
         request = gm.create_request(game, alice.id, "Protein", "ATGGTTTAA")
         submit_assigned(game, request, "Met Val Stop")
         _, deltas = gm.reject_decryption(game, alice.id, request.id)
 
         self.assertEqual(request.state, gm.RequestState.REJECTED)
-        self.assertEqual(deltas, [(bob.id, -3.9), (alice.id, -2.6)])
-        self.assert_scores(game, {"Alice": -2.6, "Bob": -3.9})
+        self.assertEqual(deltas, [(bob.id, 3.9), (alice.id, -3.9)])
+        self.assert_scores(game, {"Alice": -3.9, "Bob": 3.9})
 
-    def test_reject_valid_wrong_penalizes_only_decrypter(self):
+    def test_reject_valid_wrong_penalizes_decrypter_and_rewards_requester_qc(self):
         game, alice, bob = make_started_solo_game()
         request = gm.create_request(game, alice.id, "Protein", "ATGGTTTAA")
         submit_assigned(game, request, "Met-Val-Phe")
         _, deltas = gm.reject_decryption(game, alice.id, request.id)
 
-        self.assertEqual(deltas, [(bob.id, -3.9)])
-        self.assert_scores(game, {"Alice": 0.0, "Bob": -3.9})
+        self.assertEqual(deltas, [(bob.id, -3.9), (alice.id, 1.3)])
+        self.assert_scores(game, {"Alice": 1.3, "Bob": -3.9})
 
-    def test_reject_invalid_rewards_decrypter_and_penalizes_requester(self):
+    def test_reject_invalid_penalizes_missed_invalid_and_partly_offsets_requester_qc(self):
         game, alice, bob = make_started_solo_game()
         request = gm.create_request(game, alice.id, "Bad Protein", "ATGZZZ")
         submit_assigned(game, request, "Met ?")
         _, deltas = gm.reject_decryption(game, alice.id, request.id)
 
-        self.assertEqual(deltas, [(alice.id, -3.6), (bob.id, 1.2)])
-        self.assert_scores(game, {"Alice": -3.6, "Bob": 1.2})
+        self.assertEqual(deltas, [(bob.id, -3.6), (alice.id, -2.4)])
+        self.assert_scores(game, {"Alice": -2.4, "Bob": -3.6})
 
     def test_flag_invalid_correct_closes_request_and_scores_detection(self):
         game, alice, bob = make_started_solo_game()
@@ -261,20 +260,18 @@ class SoloScoringTableTests(unittest.TestCase):
         gm.submit_decryption(game, pending.decrypter_id, pending.id, "Met Stop")
         reveal = gm.end_game(game)
 
-        expected_sweep = {
-            awaiting.id: (-2.8, "left_undecrypted"),
-            pending.id: (2.4, "left_unresolved"),
-        }
         self.assertEqual(game.phase, gm.Phase.ENDED)
-        self.assertEqual(len(reveal["sweep"]), 2)
-        for item in reveal["sweep"]:
-            with self.subTest(item=item):
-                delta, reason = expected_sweep[item["request_id"]]
-                self.assertEqual(item["delta"], delta)
-                self.assertEqual(item["reason"], reason)
+        self.assertEqual(
+            {(item["request_id"], item["delta"], item["reason"]) for item in reveal["sweep"]},
+            {
+                (awaiting.id, -2.8, "left_undecrypted"),
+                (pending.id, 2.4, "left_unresolved_correct"),
+                (pending.id, -2.4, "left_unresolved_qc"),
+            },
+        )
         self.assertEqual(awaiting.state, gm.RequestState.AWAITING_DECRYPTION)
         self.assertEqual(pending.state, gm.RequestState.PENDING_APPROVAL)
-        self.assertAlmostEqual(sum(p.score for p in [alice, bob, cara]), -0.4)
+        self.assertAlmostEqual(sum(p.score for p in [alice, bob, cara]), -2.8)
 
     def test_end_game_is_idempotent_and_reveal_includes_truth_and_stakes(self):
         game, alice, bob = make_started_solo_game()

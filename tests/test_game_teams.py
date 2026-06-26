@@ -38,18 +38,6 @@ class TeamSetupTests(unittest.TestCase):
                 mode=gm.Mode.TEAMS,
                 teams=[{"name": "Red", "color": "#f00"}],
             )
-        with self.assertRaisesRegex(ValueError, "Not enough players"):
-            gm.new_game(
-                "Host",
-                2,
-                (1, 1),
-                mode=gm.Mode.TEAMS,
-                teams=[
-                    {"name": "Red", "color": "#f00"},
-                    {"name": "Blue", "color": "#00f"},
-                    {"name": "Green", "color": "#0f0"},
-                ],
-            )
         with self.assertRaisesRegex(ValueError, "Team name required"):
             gm.new_game(
                 "Host",
@@ -101,27 +89,29 @@ class TeamSetupTests(unittest.TestCase):
         gm.assign_team(game, host.id, red_id)
         self.assertEqual(host.team_id, red_id)
 
-    def test_team_start_requires_assignments_and_nonempty_teams(self):
+    def test_team_start_requires_assignments_and_two_occupied_teams(self):
         game, host = gm.new_game(
             "Host",
             3,
             (1, 1),
             mode=gm.Mode.TEAMS,
-            teams=[{"name": "Red"}, {"name": "Blue"}],
+            teams=[{"name": "Red"}, {"name": "Blue"}, {"name": "Green"}],
         )
         p2 = gm.join_game(game, "P2")
         p3 = gm.join_game(game, "P3")
-        red_id, blue_id = list(game.teams)
+        red_id, blue_id, green_id = list(game.teams)
         gm.assign_team(game, host.id, red_id)
         gm.assign_team(game, p2.id, red_id)
 
         with self.assertRaisesRegex(ValueError, "Players without team"):
             gm.start_game(game, host.id)
         gm.assign_team(game, p3.id, red_id)
-        with self.assertRaisesRegex(ValueError, "Empty teams"):
+        with self.assertRaisesRegex(ValueError, "at least 2 teams"):
             gm.start_game(game, host.id)
         gm.assign_team(game, p3.id, blue_id)
         gm.start_game(game, host.id)
+        self.assertEqual(game.players[p3.id].team_id, blue_id)
+        self.assertEqual(game.teams[green_id].score, 0.0)
         with self.assertRaisesRegex(ValueError, "Teams can only be picked"):
             gm.assign_team(game, p2.id, blue_id)
 
@@ -141,6 +131,27 @@ class TeamGameplayTests(unittest.TestCase):
         self.assertEqual(len(red_snapshot["incoming"]), 0)
         self.assertEqual(len(blue_snapshot["incoming"]), 1)
         self.assertEqual(len(blue_snapshot["outgoing"]), 0)
+
+    def test_team_request_ignores_unoccupied_team_choices(self):
+        game, host = gm.new_game(
+            "Host",
+            4,
+            (1, 1),
+            mode=gm.Mode.TEAMS,
+            teams=[{"name": "Red"}, {"name": "Blue"}, {"name": "Green"}],
+        )
+        guest = gm.join_game(game, "Guest")
+        red_id, blue_id, green_id = list(game.teams)
+        gm.assign_team(game, host.id, red_id)
+        gm.assign_team(game, guest.id, blue_id)
+        gm.start_game(game, host.id)
+
+        request = gm.create_request(game, host.id, "Team Protein", "ATGTAA")
+        reveal = gm.end_game(game)
+
+        self.assertEqual(request.decrypter_team_id, blue_id)
+        self.assertNotEqual(request.decrypter_team_id, green_id)
+        self.assertEqual([t["id"] for t in reveal["team_scoreboard"]], [red_id, blue_id])
 
     def test_any_decrypter_teammate_can_submit_and_first_write_wins(self):
         game, host, _red_mate, blue_one, blue_two, _red_id, _blue_id = make_started_team_game()
@@ -208,13 +219,14 @@ class TeamGameplayTests(unittest.TestCase):
         gm.submit_decryption(game, host.id, pending.id, "Met Val Stop")
 
         reveal = gm.end_game(game)
-        self.assertEqual(game.teams[blue_id].score, -2.4)
+        self.assertEqual(game.teams[blue_id].score, -5.0)
         self.assertEqual(game.teams[red_id].score, 2.6)
         self.assertEqual(
             {(item["request_id"], item["delta"], item["reason"]) for item in reveal["sweep"]},
             {
                 (awaiting.id, -2.4, "left_undecrypted"),
-                (pending.id, 2.6, "left_unresolved"),
+                (pending.id, 2.6, "left_unresolved_correct"),
+                (pending.id, -2.6, "left_unresolved_qc"),
             },
         )
 
