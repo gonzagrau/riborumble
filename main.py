@@ -257,17 +257,32 @@ async def _handle_client_message(
 
             elif mtype == "confirm_decryption":
                 r, _ = gm.confirm_decryption(game, player_id, msg["request_id"])
+                decision_was_correct = r.is_dna_valid and bool(r.submitted_peptide_is_correct)
                 post_actions.append(("decision", r, "confirmed"))
+                post_actions.append(
+                    ("sound", [player_id], "correct" if decision_was_correct else "wrong")
+                )
+                post_actions.append(("sound", _request_decrypter_actor_ids(r), "correct"))
                 post_actions.append(("scores", None))
 
             elif mtype == "reject_decryption":
                 r, _ = gm.reject_decryption(game, player_id, msg["request_id"])
+                decision_was_correct = r.is_dna_valid and not bool(r.submitted_peptide_is_correct)
                 post_actions.append(("decision", r, "rejected"))
+                post_actions.append(
+                    ("sound", [player_id], "correct" if decision_was_correct else "wrong")
+                )
                 post_actions.append(("scores", None))
 
             elif mtype == "flag_invalid_request":
                 r, _ = gm.flag_invalid_request(game, player_id, msg["request_id"])
+                flag_was_correct = not r.is_dna_valid
                 post_actions.append(("invalid_flag", r))
+                post_actions.append(
+                    ("sound", [player_id], "correct" if flag_was_correct else "wrong")
+                )
+                if flag_was_correct:
+                    post_actions.append(("sound", [r.requester_id], "wrong"))
                 post_actions.append(("scores", None))
 
             else:
@@ -298,6 +313,9 @@ async def _handle_client_message(
             await _broadcast_invalid_flag(game, action[1])
         elif kind == "scores":
             await _broadcast_scores(game)
+        elif kind == "sound":
+            _, player_ids, sound = action
+            await _broadcast_sound(game, player_ids, sound)
         elif kind == "direct_error":
             await ws.send_json({"type": "error", "message": action[1]})
 
@@ -321,6 +339,22 @@ async def _broadcast(game: gm.Game, payload: dict) -> None:
 async def _broadcast_to(game: gm.Game, player_id: str, payload: dict) -> None:
     for ws in list(SOCKETS.get((game.id, player_id), ())):
         await _send_to_socket(ws, payload)
+
+
+async def _broadcast_sound(game: gm.Game, player_ids: list[str], sound: str) -> None:
+    """Send a private sound cue to the listed players."""
+    payload = {"type": "sound_effect", "sound": sound}
+    for player_id in dict.fromkeys(pid for pid in player_ids if pid in game.players):
+        await _broadcast_to(game, player_id, payload)
+
+
+def _request_decrypter_actor_ids(r: gm.Request) -> list[str]:
+    """The player who actually submitted, falling back to the solo assignee."""
+    if r.submitted_by_id is not None:
+        return [r.submitted_by_id]
+    if r.decrypter_id is not None:
+        return [r.decrypter_id]
+    return []
 
 
 def _team_member_ids(game: gm.Game, team_id: str | None) -> list[str]:
@@ -454,6 +488,10 @@ async def _cleanup_game_later(game_id: str, delay: float) -> None:
 STATIC_DIR = Path(__file__).parent / "static"
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+SOUNDS_DIR = Path(__file__).parent / "sounds"
+if SOUNDS_DIR.exists():
+    app.mount("/sounds", StaticFiles(directory=str(SOUNDS_DIR)), name="sounds")
 
 
 @app.get("/")

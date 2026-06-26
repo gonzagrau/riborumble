@@ -627,6 +627,7 @@ const state = {
   ws: null,
   reconnectTimer: null,
   decryptingRequestId: null,
+  gameOverSoundPlayed: false,
 };
 
 //======================================================================
@@ -670,6 +671,50 @@ function safeColor(color) {
   const value = String(color || '');
   return /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(value) ? value : '#888';
 }
+
+const SOUND_URLS = Object.freeze({
+  correct: '/sounds/correct_sound.mp3',
+  wrong: '/sounds/wrong_sound.mp3',
+  notification: '/sounds/notfication_sound.mp3',
+  game_over: '/sounds/game_over_sound.mp3',
+});
+const soundPlayers = {};
+let soundsPrimed = false;
+
+function soundPlayer(kind) {
+  if (!SOUND_URLS[kind] || typeof Audio === 'undefined') return null;
+  if (!soundPlayers[kind]) {
+    const audio = new Audio(SOUND_URLS[kind]);
+    audio.preload = 'auto';
+    audio.volume = 0.85;
+    soundPlayers[kind] = audio;
+  }
+  return soundPlayers[kind];
+}
+
+function primeSounds() {
+  if (soundsPrimed) return;
+  soundsPrimed = true;
+  for (const kind of Object.keys(SOUND_URLS)) {
+    soundPlayer(kind)?.load();
+  }
+}
+
+function playSound(kind) {
+  const audio = soundPlayer(kind);
+  if (!audio) return;
+  try {
+    audio.currentTime = 0;
+    const result = audio.play();
+    if (result && typeof result.catch === 'function') result.catch(() => {});
+  } catch (e) {
+    // Browsers may block playback before a user gesture; the visual UI still updates.
+  }
+}
+
+['pointerdown', 'keydown', 'touchstart'].forEach(eventName => {
+  document.addEventListener(eventName, primeSounds, { once: true, passive: true });
+});
 
 //======================================================================
 // API
@@ -759,8 +804,12 @@ function handleServerMessage(msg) {
       upsert(state.incoming, msg.request);
       renderIncoming();
       if (wasNew && msg.request.state === 'awaiting_decryption') {
+        playSound('notification');
         toast(`New request from ${playerName(msg.request.requester_id)}: ${msg.request.protein_name}`, 'var(--accent)');
       }
+      break;
+    case 'sound_effect':
+      playSound(msg.sound);
       break;
     case 'decision_made':
       upsert(state.incoming, msg.request);
@@ -792,6 +841,10 @@ function handleServerMessage(msg) {
       state.teams = msg.team_scoreboard || state.teams || [];
       renderEnd(msg);
       showScreen('screen-end');
+      if (!state.gameOverSoundPlayed) {
+        playSound('game_over');
+        state.gameOverSoundPlayed = true;
+      }
       break;
     case 'error':
       toast('Error: ' + msg.message, 'var(--bad)');

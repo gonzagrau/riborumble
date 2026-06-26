@@ -23,6 +23,13 @@ class StaticFrontendTests(unittest.TestCase):
             "sequence_aa_length",
             "screen-end",
             "safeColor",
+            "sound_effect",
+            "playSound('notification')",
+            "playSound('game_over')",
+            "/sounds/correct_sound.mp3",
+            "/sounds/wrong_sound.mp3",
+            "/sounds/notfication_sound.mp3",
+            "/sounds/game_over_sound.mp3",
             "addEventListener('click'",
         ]
         for snippet in required_snippets:

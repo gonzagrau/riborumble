@@ -169,6 +169,66 @@ class MainApiTests(unittest.IsolatedAsyncioTestCase):
             "score": {"scope": "team", "id": blue_id, "name": "Blue", "score": -1.2},
         }])
 
+    async def test_broadcast_sound_sends_private_payload_once(self):
+        game, host = gm.new_game("Host", 2, (1, 1))
+        guest = gm.join_game(game, "Guest")
+        main.GAMES[game.id] = game
+
+        host_socket = FakeSocket()
+        guest_socket = FakeSocket()
+        main.SOCKETS[(game.id, host.id)] = {host_socket}
+        main.SOCKETS[(game.id, guest.id)] = {guest_socket}
+
+        await main._broadcast_sound(game, [host.id, host.id, "p_missing"], "correct")
+
+        self.assertEqual(host_socket.messages, [{"type": "sound_effect", "sound": "correct"}])
+        self.assertEqual(guest_socket.messages, [])
+
+    async def test_confirm_decryption_sends_correct_sound_cues_to_both_actors(self):
+        game, host = gm.new_game("Host", 2, (1, 1))
+        guest = gm.join_game(game, "Guest")
+        gm.start_game(game, host.id)
+        request = gm.create_request(game, host.id, "Protein", "ATGTAA")
+        gm.submit_decryption(game, guest.id, request.id, "Met Stop")
+        main.GAMES[game.id] = game
+
+        host_socket = FakeSocket()
+        guest_socket = FakeSocket()
+        main.SOCKETS[(game.id, host.id)] = {host_socket}
+        main.SOCKETS[(game.id, guest.id)] = {guest_socket}
+
+        await main._handle_client_message(
+            game,
+            host.id,
+            {"type": "confirm_decryption", "request_id": request.id},
+            host_socket,
+        )
+
+        self.assertIn({"type": "sound_effect", "sound": "correct"}, host_socket.messages)
+        self.assertIn({"type": "sound_effect", "sound": "correct"}, guest_socket.messages)
+
+    async def test_correct_invalid_flag_sends_correct_to_flagger_and_wrong_to_sender(self):
+        game, host = gm.new_game("Host", 2, (1, 1))
+        guest = gm.join_game(game, "Guest")
+        gm.start_game(game, host.id)
+        request = gm.create_request(game, host.id, "Bad Protein", "ATGZZZ")
+        main.GAMES[game.id] = game
+
+        host_socket = FakeSocket()
+        guest_socket = FakeSocket()
+        main.SOCKETS[(game.id, host.id)] = {host_socket}
+        main.SOCKETS[(game.id, guest.id)] = {guest_socket}
+
+        await main._handle_client_message(
+            game,
+            guest.id,
+            {"type": "flag_invalid_request", "request_id": request.id},
+            guest_socket,
+        )
+
+        self.assertIn({"type": "sound_effect", "sound": "wrong"}, host_socket.messages)
+        self.assertIn({"type": "sound_effect", "sound": "correct"}, guest_socket.messages)
+
     async def test_websocket_reconnect_after_end_gets_final_reveal(self):
         game, host = gm.new_game("Host", 2, (1, 1))
         guest = gm.join_game(game, "Guest")
