@@ -3,153 +3,275 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<link rel="icon" type="image/png" href="/static/favicon.png" />
 <title>Ribo-Rumble</title>
 <style>
   :root {
-    --bg: #0e1116;
-    --panel: #161b22;
-    --panel-2: #1d242d;
-    --border: #2a3340;
-    --text: #e6edf3;
-    --muted: #8b98a5;
-    --accent: #58a6ff;
-    --good: #3fb950;
-    --bad: #f85149;
-    --warn: #d29922;
+    --bg: #fffaf0;
+    --panel: #ffffff;
+    --panel-2: #f7fbff;
+    --border: #22404a;
+    --border-soft: #d8e8df;
+    --text: #20313a;
+    --muted: #62727c;
+    --accent: #2f80ed;
+    --accent-2: #ff7a59;
+    --accent-3: #00a88f;
+    --good: #16a34a;
+    --bad: #e5484d;
+    --warn: #f4b400;
+    --paper: #fffdf7;
+    --shadow: 0 12px 0 rgba(32, 49, 58, 0.12);
+    --shadow-soft: 0 12px 28px rgba(32, 49, 58, 0.12);
   }
   * { box-sizing: border-box; }
   body {
     margin: 0;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-    background: var(--bg);
+    background:
+      linear-gradient(rgba(47, 128, 237, 0.05) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0, 168, 143, 0.05) 1px, transparent 1px),
+      var(--bg);
+    background-size: 34px 34px;
     color: var(--text);
     min-height: 100vh;
   }
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background:
+      repeating-linear-gradient(135deg,
+        rgba(255, 122, 89, 0.14) 0 10px,
+        transparent 10px 24px,
+        rgba(0, 168, 143, 0.12) 24px 34px,
+        transparent 34px 52px);
+    clip-path: polygon(0 0, 100% 0, 100% 72px, 0 120px);
+    z-index: 0;
+  }
+  body > header, body > main, .modal-bg, .toast {
+    position: relative;
+  }
+  body > header, body > main {
+    z-index: 1;
+  }
   header {
-    padding: 12px 20px;
-    border-bottom: 1px solid var(--border);
+    padding: 16px 22px;
+    border-bottom: 3px solid var(--border);
     display: flex;
+    gap: 16px;
     justify-content: space-between;
     align-items: center;
-    background: var(--panel);
+    background: rgba(255, 255, 255, 0.88);
+    backdrop-filter: blur(12px);
+    box-shadow: 0 6px 0 rgba(32, 49, 58, 0.08);
+    position: sticky;
+    top: 0;
+    z-index: 5;
   }
-  header h1 { margin: 0; font-size: 20px; letter-spacing: 0.5px; }
-  header .meta { color: var(--muted); font-size: 13px; }
-  main { padding: 20px; max-width: 1400px; margin: 0 auto; }
+  header h1 {
+    margin: 0;
+    font-size: 22px;
+    letter-spacing: 0;
+    color: var(--text);
+    text-shadow: 2px 2px 0 #ffe28a;
+    white-space: nowrap;
+  }
+  header .meta {
+    color: var(--muted);
+    font-size: 13px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+  main { padding: 24px 20px 36px; max-width: 1400px; margin: 0 auto; }
   .screen { display: none; }
   .screen.active { display: block; }
 
   /* Forms */
   .card {
-    background: var(--panel);
-    border: 1px solid var(--border);
+    background: var(--paper);
+    border: 3px solid var(--border);
     border-radius: 8px;
     padding: 24px;
     max-width: 480px;
     margin: 40px auto;
+    box-shadow: var(--shadow);
   }
-  .card h2 { margin-top: 0; }
-  label { display: block; margin: 12px 0 4px; font-size: 13px; color: var(--muted); }
+  .card h2 {
+    margin: 0 0 18px;
+    font-size: 28px;
+    color: var(--text);
+  }
+  label {
+    display: block;
+    margin: 14px 0 6px;
+    font-size: 12px;
+    color: var(--muted);
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
   input, textarea, select, button {
     font: inherit;
     color: var(--text);
-    background: var(--panel-2);
-    border: 1px solid var(--border);
+    background: #fff;
+    border: 2px solid var(--border-soft);
     border-radius: 6px;
-    padding: 10px 12px;
+    padding: 11px 12px;
     width: 100%;
   }
-  textarea { resize: vertical; min-height: 80px; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+  input:focus, textarea:focus, select:focus {
+    outline: 3px solid rgba(47, 128, 237, 0.18);
+    border-color: var(--accent);
+  }
+  textarea {
+    resize: vertical;
+    min-height: 96px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    line-height: 1.5;
+  }
   button {
     background: var(--accent);
-    color: #051018;
-    font-weight: 600;
+    color: #fff;
+    font-weight: 800;
     cursor: pointer;
-    border: none;
+    border: 2px solid var(--border);
     margin-top: 12px;
+    box-shadow: 0 4px 0 var(--border);
+    transition: transform 0.12s ease, box-shadow 0.12s ease, filter 0.12s ease;
   }
-  button:hover { filter: brightness(1.1); }
-  button:disabled { opacity: 0.5; cursor: not-allowed; }
-  button.secondary { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); }
+  button:hover { filter: brightness(1.04); transform: translateY(-1px); }
+  button:active { transform: translateY(3px); box-shadow: 0 1px 0 var(--border); }
+  button:disabled { opacity: 0.55; cursor: not-allowed; transform: none; box-shadow: 0 4px 0 var(--border); }
+  button.secondary { background: #fff6cf; color: var(--text); border-color: var(--border); }
   button.danger { background: var(--bad); color: white; }
-  button.good { background: var(--good); color: #051a07; }
-  .row { display: flex; gap: 8px; }
+  button.good { background: var(--good); color: white; }
+  .row { display: flex; gap: 10px; }
   .row > * { flex: 1; }
-  .toggle { display: flex; gap: 8px; margin-bottom: 20px; }
-  .toggle button { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); }
-  .toggle button.active { background: var(--accent); color: #051018; border-color: var(--accent); }
+  .toggle { display: flex; gap: 10px; margin-bottom: 20px; }
+  .toggle button {
+    background: #eaf8ff;
+    color: var(--text);
+    border: 2px solid var(--border);
+  }
+  .toggle button.active { background: var(--warn); color: #2f2400; border-color: var(--border); }
 
   /* Lobby */
   .player-list { list-style: none; padding: 0; }
   .player-list li {
-    padding: 10px 14px;
-    background: var(--panel-2);
+    padding: 11px 14px;
+    background: #f2fff8;
+    border: 2px solid var(--border-soft);
     border-radius: 6px;
-    margin-bottom: 6px;
+    margin-bottom: 8px;
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 12px;
   }
   .player-list .dot {
-    width: 8px; height: 8px; border-radius: 50%;
-    background: var(--muted); display: inline-block; margin-right: 8px;
+    width: 10px; height: 10px; border-radius: 50%;
+    background: #c3cbd0; display: inline-block; margin-right: 8px;
+    box-shadow: 0 0 0 3px #fff;
   }
   .player-list .dot.on { background: var(--good); }
   .badge {
     display: inline-block;
-    padding: 2px 8px;
+    padding: 3px 8px;
     border-radius: 4px;
     font-size: 11px;
-    background: var(--panel);
+    font-weight: 800;
+    background: #fff;
     color: var(--muted);
-    border: 1px solid var(--border);
+    border: 2px solid var(--border-soft);
   }
-  .badge.you { background: var(--accent); color: #051018; border-color: var(--accent); }
-  .badge.host { background: var(--warn); color: #1a1206; border-color: var(--warn); }
+  .badge.you { background: #dff4ff; color: #0b579e; border-color: #9dd7ff; }
+  .badge.host { background: #fff0a8; color: #6d4d00; border-color: #f6c945; }
+  .score-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    border-radius: 4px;
+    background: #e6fff4;
+    border: 2px solid var(--accent-3);
+    color: var(--text);
+    font-weight: 900;
+    box-shadow: 0 3px 0 rgba(0, 168, 143, 0.25);
+  }
   .share-link {
-    background: var(--panel-2);
-    border: 1px solid var(--border);
+    background: #edf9ff;
+    border: 2px dashed #7cc8ff;
     border-radius: 6px;
-    padding: 10px;
+    padding: 12px;
     font-family: ui-monospace, Menlo, monospace;
     font-size: 12px;
     word-break: break-all;
     margin-top: 8px;
+    color: #0b579e;
   }
 
   /* In-game two-column */
+  #screen-game > div:first-child {
+    background: rgba(255, 255, 255, 0.88);
+    border: 3px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+    box-shadow: var(--shadow);
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  #btn-new-request {
+    background: var(--accent-2);
+    min-width: 168px;
+  }
   .game-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 16px;
+    gap: 18px;
   }
   @media (max-width: 800px) {
     .game-grid { grid-template-columns: 1fr; }
   }
   .column {
     background: var(--panel);
-    border: 1px solid var(--border);
+    border: 3px solid var(--border);
     border-radius: 8px;
     overflow: hidden;
     display: flex;
     flex-direction: column;
+    box-shadow: var(--shadow);
   }
+  .game-grid .column:nth-child(1) { background: #fff7e0; }
+  .game-grid .column:nth-child(2) { background: #eafbf4; }
   .column header {
-    background: transparent;
-    border-bottom: 1px solid var(--border);
+    background: #fff;
+    border-bottom: 3px solid var(--border);
     padding: 14px 16px;
   }
-  .column header h3 { margin: 0; font-size: 15px; }
-  .column .body { padding: 12px 16px; flex: 1; overflow-y: auto; max-height: 70vh; }
+  .column header h3 { margin: 0; font-size: 16px; letter-spacing: 0; }
+  .column .body { padding: 14px 16px; flex: 1; overflow-y: auto; max-height: 70vh; }
   .req-item {
-    background: var(--panel-2);
-    border: 1px solid var(--border);
+    background: var(--panel);
+    border: 2px solid var(--border);
     border-radius: 6px;
-    padding: 12px;
-    margin-bottom: 10px;
+    padding: 13px;
+    margin-bottom: 12px;
+    box-shadow: 0 5px 0 rgba(32, 49, 58, 0.1);
+    position: relative;
+  }
+  .game-grid .column:nth-child(1) .req-item {
+    box-shadow: inset 6px 0 0 var(--accent-2), 0 5px 0 rgba(32, 49, 58, 0.1);
+  }
+  .game-grid .column:nth-child(2) .req-item {
+    box-shadow: inset 6px 0 0 var(--accent-3), 0 5px 0 rgba(32, 49, 58, 0.1);
   }
   .req-item .name {
-    font-weight: 600;
+    font-weight: 900;
     font-size: 14px;
     display: flex;
     justify-content: space-between;
@@ -159,70 +281,88 @@
   .req-item .meta {
     color: var(--muted);
     font-size: 12px;
-    margin-top: 4px;
+    margin-top: 6px;
+    font-weight: 650;
   }
   .req-item .dna {
     font-family: ui-monospace, Menlo, monospace;
     font-size: 13px;
-    background: var(--panel);
+    background: #f7fbff;
+    border: 2px solid #d9edf8;
     border-radius: 4px;
-    padding: 6px 8px;
-    margin-top: 8px;
-    color: #c9d1d9;
+    padding: 8px 10px;
+    margin-top: 10px;
+    color: #163642;
     word-break: break-all;
+    letter-spacing: 0.06em;
   }
   .req-item .peptide {
     font-family: ui-monospace, Menlo, monospace;
     font-size: 13px;
-    background: var(--panel);
+    background: #fff8d7;
+    border: 2px solid #f4de7b;
     border-radius: 4px;
-    padding: 6px 8px;
+    padding: 8px 10px;
     margin-top: 8px;
-    color: #c9d1d9;
+    color: #453600;
   }
-  .req-item .actions { margin-top: 8px; display: flex; gap: 6px; }
-  .req-item .actions button { width: auto; padding: 6px 12px; margin: 0; font-size: 13px; }
+  .req-item .actions { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
+  .req-item .actions button { width: auto; padding: 7px 12px; margin: 0; font-size: 13px; }
   .state-pill {
     font-size: 11px;
-    padding: 2px 8px;
+    padding: 4px 9px;
     border-radius: 999px;
-    border: 1px solid var(--border);
-    background: var(--panel);
+    border: 2px solid var(--border-soft);
+    background: #f3f6f8;
     color: var(--muted);
+    font-weight: 900;
+    white-space: nowrap;
   }
-  .state-pill.pending { background: #3a2c00; color: var(--warn); border-color: var(--warn); }
-  .state-pill.confirmed { background: #0f3a1d; color: var(--good); border-color: var(--good); }
-  .state-pill.rejected { background: #3a0f10; color: var(--bad); border-color: var(--bad); }
+  .state-pill.pending { background: #fff0b8; color: #775400; border-color: #f4c542; }
+  .state-pill.confirmed { background: #daf9e3; color: #126d34; border-color: #78d995; }
+  .state-pill.rejected { background: #ffe0df; color: #a51d2a; border-color: #ff9c9f; }
   .empty { color: var(--muted); font-style: italic; text-align: center; padding: 20px; }
 
   /* Modals */
   .modal-bg {
     position: fixed; inset: 0;
-    background: rgba(0,0,0,0.6);
+    background: rgba(32, 49, 58, 0.28);
     display: none;
     align-items: center;
     justify-content: center;
     z-index: 10;
+    backdrop-filter: blur(5px);
   }
   .modal-bg.active { display: flex; }
   .modal {
-    background: var(--panel);
-    border: 1px solid var(--border);
+    background: var(--paper);
+    border: 3px solid var(--border);
     border-radius: 8px;
     padding: 24px;
     max-width: 480px;
     width: calc(100% - 40px);
+    box-shadow: var(--shadow);
   }
-  .modal h3 { margin-top: 0; }
+  .modal h3 { margin: 0 0 12px; font-size: 24px; }
   .codon-table {
-    background: var(--panel-2);
+    background: #f7fbff;
+    border: 2px solid #d9edf8;
     border-radius: 6px;
     padding: 10px;
     font-family: ui-monospace, Menlo, monospace;
     font-size: 12px;
-    color: var(--muted);
+    color: var(--text);
+    line-height: 2.3;
   }
-  .codon-table span { display: inline-block; margin-right: 14px; }
+  .codon-table span {
+    display: inline-block;
+    margin: 0 8px 8px 0;
+    padding: 2px 7px;
+    border-radius: 4px;
+    background: #fff;
+    border: 2px solid var(--border-soft);
+    box-shadow: 0 2px 0 rgba(32, 49, 58, 0.08);
+  }
 
   /* End game */
   .scoreboard { list-style: none; padding: 0; max-width: 600px; margin: 20px auto; }
@@ -230,28 +370,35 @@
     display: flex;
     justify-content: space-between;
     padding: 14px 18px;
-    background: var(--panel-2);
-    border: 1px solid var(--border);
+    background: #fff;
+    border: 2px solid var(--border);
     border-radius: 6px;
-    margin-bottom: 6px;
+    margin-bottom: 8px;
     font-size: 16px;
+    box-shadow: 0 4px 0 rgba(32, 49, 58, 0.1);
   }
-  .scoreboard li.gold { border-color: #d4af37; background: #2d2510; }
-  .scoreboard li.silver { border-color: #8a8a8a; }
-  .scoreboard li.bronze { border-color: #7d4d2d; }
+  .scoreboard li.gold { border-color: #f4b400; background: #fff6cf; }
+  .scoreboard li.silver { border-color: #a8b3bd; background: #f4f7f9; }
+  .scoreboard li.bronze { border-color: #c9784c; background: #ffeadf; }
   .scoreboard .pts { font-weight: 700; }
   .reveal-table {
     width: 100%;
-    border-collapse: collapse;
+    border-collapse: separate;
+    border-spacing: 0;
     margin-top: 20px;
     font-size: 13px;
+    background: #fff;
+    border: 3px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: var(--shadow);
   }
   .reveal-table th, .reveal-table td {
     padding: 8px 10px;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--border-soft);
     text-align: left;
   }
-  .reveal-table th { color: var(--muted); font-weight: 500; }
+  .reveal-table th { color: var(--text); font-weight: 900; background: #eaf8ff; }
   .reveal-table .ok { color: var(--good); }
   .reveal-table .no { color: var(--bad); }
 
@@ -260,18 +407,42 @@
     bottom: 24px;
     left: 50%;
     transform: translateX(-50%);
-    background: var(--panel);
-    border: 1px solid var(--border);
+    background: #fff;
+    border: 3px solid var(--border);
     color: var(--text);
     padding: 10px 18px;
     border-radius: 6px;
     z-index: 50;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    box-shadow: var(--shadow-soft);
     opacity: 0;
     transition: opacity 0.2s;
     pointer-events: none;
+    font-weight: 800;
   }
   .toast.show { opacity: 1; }
+
+  @media (max-width: 720px) {
+    header {
+      align-items: flex-start;
+      flex-direction: column;
+      padding: 14px 16px;
+    }
+    header .meta { justify-content: flex-start; }
+    main { padding: 16px 12px 28px; }
+    .card { margin: 20px auto; padding: 18px; }
+    .row, .toggle { flex-direction: column; }
+    #screen-game > div:first-child {
+      align-items: stretch;
+    }
+    #btn-new-request { min-width: 0; }
+    .req-item .name {
+      align-items: flex-start;
+      flex-direction: column;
+    }
+    .req-item .actions button { width: 100%; }
+    #screen-end > div:last-child { overflow-x: auto; }
+    .reveal-table { min-width: 860px; }
+  }
 </style>
 </head>
 <body>
@@ -293,13 +464,8 @@
       <div id="create-form">
         <label>Your name</label>
         <input id="host-name" placeholder="Alice" autocomplete="off" />
-        <label>Number of players</label>
-        <input id="expected-players" type="number" min="2" max="20" value="3" />
-        <label>End window (minutes): random somewhere between</label>
-        <div class="row">
-          <input id="end-min" type="number" min="0.5" step="0.5" value="15" />
-          <input id="end-max" type="number" min="0.5" step="0.5" value="25" />
-        </div>
+        <label>Game duration (minutes)</label>
+        <input id="game-duration" type="number" min="0.5" step="0.5" value="15" />
         <label>Mode</label>
         <div class="toggle" style="margin-bottom:8px">
           <button type="button" id="mode-solo" class="active">Solo (free-for-all)</button>
@@ -308,9 +474,6 @@
         <div id="team-config" style="display:none">
           <label>Teams (comma-separated names)</label>
           <input id="team-names" value="Red, Blue" autocomplete="off" />
-          <p style="color:var(--muted); font-size:12px; margin-top:4px">
-            Two teams → 2 colors auto-assigned. More teams → more colors.
-          </p>
         </div>
         <button id="btn-create">Create</button>
       </div>
@@ -341,7 +504,7 @@
         <select id="my-team-select"></select>
       </div>
 
-      <label>Codon table (give this on paper to everyone)</label>
+      <label>Codon table</label>
       <div class="codon-table" id="codon-table-display"></div>
 
       <button id="btn-start" style="display:none">Start game</button>
@@ -353,7 +516,7 @@
   <section class="screen" id="screen-game">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
       <div>
-        <button id="btn-new-request">+ New request (you are the requester)</button>
+        <button id="btn-new-request">+ New request</button>
       </div>
       <div style="color:var(--muted); font-size:13px;">
         Codon table: <span id="codon-table-inline"></span>
@@ -361,11 +524,11 @@
     </div>
     <div class="game-grid">
       <div class="column">
-        <header><h3>📤 Sent requests <span style="color:var(--muted); font-size:12px;">(your DNAs)</span></h3></header>
+        <header><h3>📤 Sent requests</h3></header>
         <div class="body" id="outgoing-list"></div>
       </div>
       <div class="column">
-        <header><h3>📥 Received requests <span style="color:var(--muted); font-size:12px;">(decrypt from paper)</span></h3></header>
+        <header><h3>📥 Received requests</h3></header>
         <div class="body" id="incoming-list"></div>
       </div>
     </div>
@@ -386,6 +549,7 @@
           <th>Requester</th>
           <th>Decrypter</th>
           <th>DNA</th>
+          <th>Stakes</th>
           <th>Truth</th>
           <th>Submitted</th>
           <th>Valid?</th>
@@ -405,15 +569,10 @@
     <input id="new-protein-name" autocomplete="off" />
     <label>DNA sequence</label>
     <textarea id="new-dna" placeholder="ATG GTT TTT GAA TAA"></textarea>
-    <label id="new-decrypter-label">Send to</label>
-    <select id="new-decrypter"></select>
     <div class="row" style="margin-top:16px">
       <button class="secondary" id="cancel-new">Cancel</button>
       <button id="confirm-new">Send</button>
     </div>
-    <p style="color:var(--muted); font-size:12px; margin-top:12px">
-      Remember: hand the paper with "<em>Protein - DNA</em>" to the decrypter physically.
-    </p>
   </div>
 </div>
 
@@ -421,9 +580,6 @@
 <div class="modal-bg" id="modal-decrypt">
   <div class="modal">
     <h3>Decrypt: <span id="decrypt-protein"></span></h3>
-    <p style="color:var(--muted); font-size:13px;">
-      Read the DNA from the paper. Submit your guessed polypeptide below.
-    </p>
     <label>Peptide guess</label>
     <input id="peptide-guess" placeholder="Met-Val-Phe-Glu-Stop" autocomplete="off" />
     <p style="color:var(--muted); font-size:12px;">
@@ -446,10 +602,10 @@ const state = {
   gameId: null,
   playerId: null,
   hostPlayerId: null,
-  expectedPlayers: 0,
   codonTable: {},
   players: [],
   teams: [],
+  score: null,
   mode: 'solo',
   outgoing: [],
   incoming: [],
@@ -457,6 +613,7 @@ const state = {
   ws: null,
   reconnectTimer: null,
   decryptingRequestId: null,
+  gameOverSoundPlayed: false,
 };
 
 //======================================================================
@@ -482,6 +639,68 @@ function playerName(pid) {
 function shareUrl() {
   return `${location.origin}/?game=${state.gameId}`;
 }
+function formatScore(value) {
+  const n = Number(value || 0);
+  return n.toFixed(1).replace(/\.0$/, '');
+}
+function scoreHtml() {
+  if (!state.score) return '';
+  const label = state.score.scope === 'team' ? `${state.score.name || 'Team'} score` : 'Score';
+  return `<span class="score-chip">${escapeHtml(label)}: ${formatScore(state.score.score)}</span>`;
+}
+function requestScaleLabel(r) {
+  const len = Number(r.sequence_aa_length || 0);
+  const mult = Number(r.point_multiplier || 1);
+  return `${len} aa · x${mult.toFixed(1)}`;
+}
+function safeColor(color) {
+  const value = String(color || '');
+  return /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(value) ? value : '#888';
+}
+
+const SOUND_URLS = Object.freeze({
+  correct: '/sounds/correct_sound.mp3',
+  wrong: '/sounds/wrong_sound.mp3',
+  notification: '/sounds/notfication_sound.mp3',
+  game_over: '/sounds/game_over_sound.mp3',
+});
+const soundPlayers = {};
+let soundsPrimed = false;
+
+function soundPlayer(kind) {
+  if (!SOUND_URLS[kind] || typeof Audio === 'undefined') return null;
+  if (!soundPlayers[kind]) {
+    const audio = new Audio(SOUND_URLS[kind]);
+    audio.preload = 'auto';
+    audio.volume = 0.85;
+    soundPlayers[kind] = audio;
+  }
+  return soundPlayers[kind];
+}
+
+function primeSounds() {
+  if (soundsPrimed) return;
+  soundsPrimed = true;
+  for (const kind of Object.keys(SOUND_URLS)) {
+    soundPlayer(kind)?.load();
+  }
+}
+
+function playSound(kind) {
+  const audio = soundPlayer(kind);
+  if (!audio) return;
+  try {
+    audio.currentTime = 0;
+    const result = audio.play();
+    if (result && typeof result.catch === 'function') result.catch(() => {});
+  } catch (e) {
+    // Browsers may block playback before a user gesture; the visual UI still updates.
+  }
+}
+
+['pointerdown', 'keydown', 'touchstart'].forEach(eventName => {
+  document.addEventListener(eventName, primeSounds, { once: true, passive: true });
+});
 
 //======================================================================
 // API
@@ -538,9 +757,9 @@ function handleServerMessage(msg) {
       state.players = msg.players;
       state.teams = msg.teams || [];
       state.mode = msg.mode || 'solo';
-      state.expectedPlayers = msg.expected_players;
       state.hostPlayerId = msg.host_player_id;
       state.codonTable = msg.codon_table;
+      state.score = msg.score || state.score;
       state.outgoing = msg.outgoing || [];
       state.incoming = msg.incoming || [];
       renderAll();
@@ -550,7 +769,6 @@ function handleServerMessage(msg) {
       state.players = msg.players;
       state.teams = msg.teams || state.teams;
       state.mode = msg.mode || state.mode;
-      state.expectedPlayers = msg.expected_players;
       state.hostPlayerId = msg.host_player_id;
       renderLobby();
       if (state.phase === 'lobby') showScreen('screen-lobby');
@@ -570,8 +788,12 @@ function handleServerMessage(msg) {
       upsert(state.incoming, msg.request);
       renderIncoming();
       if (wasNew && msg.request.state === 'awaiting_decryption') {
+        playSound('notification');
         toast(`New request from ${playerName(msg.request.requester_id)}: ${msg.request.protein_name}`, 'var(--accent)');
       }
+      break;
+    case 'sound_effect':
+      playSound(msg.sound);
       break;
     case 'decision_made':
       upsert(state.incoming, msg.request);
@@ -583,10 +805,30 @@ function handleServerMessage(msg) {
       toast(`${who} ${verb} the decryption of ${msg.request.protein_name}`,
             msg.decision === 'confirmed' ? 'var(--good)' : 'var(--bad)');
       break;
+    case 'invalid_flagged':
+      upsert(state.incoming, msg.request);
+      renderIncoming();
+      toast(`Invalid DNA flag submitted for ${msg.request.protein_name}`, 'var(--warn)');
+      break;
+    case 'score_update':
+      state.score = msg.score || state.score;
+      renderAll();
+      break;
     case 'game_ended':
       state.phase = 'ended';
+      state.players = (msg.scoreboard || state.players || []).map(p => ({
+        id: p.id,
+        name: p.name,
+        connected: false,
+        team_id: p.team_id ?? null,
+      }));
+      state.teams = msg.team_scoreboard || state.teams || [];
       renderEnd(msg);
       showScreen('screen-end');
+      if (!state.gameOverSoundPlayed) {
+        playSound('game_over');
+        state.gameOverSoundPlayed = true;
+      }
       break;
     case 'error':
       toast('Error: ' + msg.message, 'var(--bad)');
@@ -603,7 +845,7 @@ function upsert(list, item) {
 //======================================================================
 // Rendering
 //======================================================================
-function renderAll() {
+function renderHeader() {
   let metaText = '';
   if (state.gameId) {
     metaText = `Game ${state.gameId} · You: ${playerName(state.playerId)}`;
@@ -612,7 +854,11 @@ function renderAll() {
       if (t) metaText += ` · Team ${t.name}`;
     }
   }
-  $('header-meta').textContent = metaText;
+  $('header-meta').innerHTML = `${escapeHtml(metaText)}${scoreHtml()}`;
+}
+
+function renderAll() {
+  renderHeader();
   if (state.phase === 'lobby') {
     renderLobby();
     showScreen('screen-lobby');
@@ -628,7 +874,8 @@ function teamById(tid) { return state.teams.find(t => t.id === tid); }
 function teamBadge(tid) {
   const t = teamById(tid);
   if (!t) return '';
-  return `<span class="badge" style="background:${t.color};color:#000;border-color:${t.color}">${escapeHtml(t.name)}</span>`;
+  const color = safeColor(t.color);
+  return `<span class="badge" style="background:${color};color:#000;border-color:${color}">${escapeHtml(t.name)}</span>`;
 }
 function myTeamId() {
   const me = state.players.find(p => p.id === state.playerId);
@@ -636,8 +883,9 @@ function myTeamId() {
 }
 
 function renderLobby() {
+  renderHeader();
   $('share-link').textContent = shareUrl();
-  $('lobby-count').textContent = `(${state.players.length} / ${state.expectedPlayers})`;
+  $('lobby-count').textContent = `(${state.players.length})`;
   const ul = $('lobby-players');
   ul.innerHTML = '';
   for (const p of state.players) {
@@ -678,26 +926,23 @@ function renderLobby() {
   }
   // Start button visibility & readiness
   const isHost = state.playerId === state.hostPlayerId;
-  let ready = state.players.length >= state.expectedPlayers;
-  let waitingMsg = ready ? '' : 'Waiting for all players to join.';
+  let ready = state.players.length >= 2;
+  let waitingMsg = ready ? '' : 'Need at least 2 players.';
   if (ready && state.mode === 'teams') {
     const unassigned = state.players.filter(p => !p.team_id);
-    const perTeam = {};
-    for (const t of state.teams) perTeam[t.id] = 0;
-    for (const p of state.players) if (p.team_id) perTeam[p.team_id] = (perTeam[p.team_id] || 0) + 1;
-    const emptyTeams = state.teams.filter(t => !perTeam[t.id]);
+    const occupiedTeamIds = new Set(state.players.map(p => p.team_id).filter(Boolean));
     if (unassigned.length) {
       ready = false;
       waitingMsg = `${unassigned.length} player(s) haven't picked a team.`;
-    } else if (emptyTeams.length) {
+    } else if (occupiedTeamIds.size < 2) {
       ready = false;
-      waitingMsg = `Empty team(s): ${emptyTeams.map(t => t.name).join(', ')}.`;
+      waitingMsg = 'Need at least 2 teams.';
     }
   }
   const btn = $('btn-start');
   btn.style.display = isHost ? 'block' : 'none';
   btn.disabled = !ready;
-  btn.textContent = ready ? 'Start game' : `Waiting (${state.players.length}/${state.expectedPlayers})`;
+  btn.textContent = ready ? 'Start game' : 'Waiting';
   $('lobby-status').textContent = isHost
     ? waitingMsg
     : (ready ? 'Waiting for host to start.' : waitingMsg);
@@ -706,29 +951,6 @@ function renderLobby() {
 function renderGame() {
   renderOutgoing();
   renderIncoming();
-  // "Send to" dropdown: in team mode → opposing teams; in solo → other players
-  const sel = $('new-decrypter');
-  sel.innerHTML = '';
-  if (state.mode === 'teams') {
-    const mine = myTeamId();
-    for (const t of state.teams) {
-      if (t.id === mine) continue;
-      const opt = document.createElement('option');
-      opt.value = 'team:' + t.id;
-      opt.textContent = 'Team ' + t.name;
-      sel.appendChild(opt);
-    }
-    $('new-decrypter-label').textContent = 'Send to team';
-  } else {
-    for (const p of state.players) {
-      if (p.id === state.playerId) continue;
-      const opt = document.createElement('option');
-      opt.value = 'player:' + p.id;
-      opt.textContent = p.name;
-      sel.appendChild(opt);
-    }
-    $('new-decrypter-label').textContent = 'Send to';
-  }
   // Inline codon table
   $('codon-table-inline').textContent = Object.entries(state.codonTable)
     .map(([c, a]) => `${c}→${a}`).join('  ');
@@ -740,6 +962,7 @@ function statePill(s) {
     pending_approval: { label: 'Pending approval', cls: 'pending' },
     confirmed: { label: 'Confirmed', cls: 'confirmed' },
     rejected: { label: 'Rejected', cls: 'rejected' },
+    flagged_invalid: { label: 'Invalid flagged', cls: 'rejected' },
   };
   const x = labels[s] || { label: s, cls: '' };
   return `<span class="state-pill ${x.cls}">${x.label}</span>`;
@@ -753,19 +976,21 @@ function renderOutgoing() {
   }
   el.innerHTML = '';
   // Sort: pending_approval first (action needed), then awaiting, then resolved
-  const order = { pending_approval: 0, awaiting_decryption: 1, confirmed: 2, rejected: 2 };
+  const order = { pending_approval: 0, awaiting_decryption: 1, confirmed: 2, rejected: 2, flagged_invalid: 2 };
   const sorted = [...state.outgoing].sort((a, b) => order[a.state] - order[b.state]);
   for (const r of sorted) {
     const div = document.createElement('div');
     div.className = 'req-item';
     let actions = '';
     let submittedHtml = '';
-    if (r.state === 'pending_approval' && r.submitted_peptide) {
+    if (r.submitted_peptide) {
       submittedHtml = `<div class="peptide">Their guess: ${escapeHtml(r.submitted_peptide)}</div>`;
+    }
+    if (r.state === 'pending_approval') {
       actions = `
         <div class="actions">
-          <button class="good" onclick="confirmReq('${r.id}')">✓ Confirm</button>
-          <button class="danger" onclick="rejectReq('${r.id}')">✗ Reject</button>
+          <button class="good js-confirm" type="button">✓ Confirm</button>
+          <button class="danger js-reject" type="button">✗ Reject</button>
         </div>`;
     }
     // Destination label: team name in team mode, player name in solo
@@ -777,8 +1002,13 @@ function renderOutgoing() {
     if (state.mode === 'teams') {
       const initiated = playerName(r.requester_id);
       const parts = [`Sent by ${escapeHtml(initiated)}`];
-      if (r.submitted_by_id) parts.push(`their team: ${escapeHtml(playerName(r.submitted_by_id))} decrypted`);
-      if (r.resolved_by_id) parts.push(`${escapeHtml(playerName(r.resolved_by_id))} resolved`);
+      if (r.submitted_by_id) {
+        const action = r.state === 'flagged_invalid' ? 'flagged invalid' : 'decrypted';
+        parts.push(`their team: ${escapeHtml(playerName(r.submitted_by_id))} ${action}`);
+      }
+      if (r.resolved_by_id && r.state !== 'flagged_invalid') {
+        parts.push(`${escapeHtml(playerName(r.resolved_by_id))} resolved`);
+      }
       auditHtml = `<div class="meta">${parts.join(' · ')}</div>`;
     }
     div.innerHTML = `
@@ -786,11 +1016,14 @@ function renderOutgoing() {
         <span>${escapeHtml(r.protein_name)} → ${escapeHtml(destLabel)}</span>
         ${statePill(r.state)}
       </div>
+      <div class="meta">${escapeHtml(requestScaleLabel(r))}</div>
       ${auditHtml}
       <div class="dna">${escapeHtml(r.dna_sequence)}</div>
       ${submittedHtml}
       ${actions}
     `;
+    div.querySelector('.js-confirm')?.addEventListener('click', () => confirmReq(r.id));
+    div.querySelector('.js-reject')?.addEventListener('click', () => rejectReq(r.id));
     el.appendChild(div);
   }
 }
@@ -802,7 +1035,7 @@ function renderIncoming() {
     return;
   }
   el.innerHTML = '';
-  const order = { awaiting_decryption: 0, pending_approval: 1, confirmed: 2, rejected: 2 };
+  const order = { awaiting_decryption: 0, pending_approval: 1, confirmed: 2, rejected: 2, flagged_invalid: 2 };
   const sorted = [...state.incoming].sort((a, b) => order[a.state] - order[b.state]);
   for (const r of sorted) {
     const div = document.createElement('div');
@@ -812,7 +1045,8 @@ function renderIncoming() {
     if (r.state === 'awaiting_decryption') {
       action = `
         <div class="actions">
-          <button onclick="openDecrypt('${r.id}', '${escapeAttr(r.protein_name)}')">Submit decryption</button>
+          <button class="js-decrypt" type="button">Submit decryption</button>
+          <button class="secondary js-flag-invalid" type="button">Flag invalid</button>
         </div>`;
     } else if (r.submitted_peptide) {
       submittedHtml = `<div class="peptide">You submitted: ${escapeHtml(r.submitted_peptide)}</div>`;
@@ -821,13 +1055,14 @@ function renderIncoming() {
     const srcLabel = state.mode === 'teams'
       ? `Team ${teamById(r.requester_team_id)?.name ?? '???'}`
       : playerName(r.requester_id);
-    let auditHtml = '<div class="meta">DNA is on the paper they gave you.</div>';
+    let auditHtml = '';
     if (state.mode === 'teams') {
       const parts = [`Initiated by ${escapeHtml(playerName(r.requester_id))}`];
       if (r.submitted_by_id) {
         const submitter = playerName(r.submitted_by_id);
         const youDid = r.submitted_by_id === state.playerId;
-        parts.push(youDid ? 'you submitted' : `${escapeHtml(submitter)} submitted`);
+        const action = r.state === 'flagged_invalid' ? 'flagged invalid' : 'submitted';
+        parts.push(youDid ? `you ${action}` : `${escapeHtml(submitter)} ${action}`);
       }
       auditHtml = `<div class="meta">${parts.join(' · ')}</div>`;
     }
@@ -840,10 +1075,14 @@ function renderIncoming() {
         <span>${escapeHtml(r.protein_name)} ← ${escapeHtml(srcLabel)}</span>
         ${statePill(r.state)}
       </div>
+      <div class="meta">${escapeHtml(requestScaleLabel(r))}</div>
+      <div class="dna">${escapeHtml(r.dna_sequence ?? '')}</div>
       ${auditHtml}
       ${submittedHtml}
       ${action}
     `;
+    div.querySelector('.js-decrypt')?.addEventListener('click', () => openDecrypt(r.id, r.protein_name));
+    div.querySelector('.js-flag-invalid')?.addEventListener('click', () => flagInvalid(r.id));
     el.appendChild(div);
   }
 }
@@ -866,7 +1105,8 @@ function renderEnd(msg) {
       else if (i === 1) li.classList.add('silver');
       else if (i === 2) li.classList.add('bronze');
       const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
-      li.innerHTML = `<span><span style="display:inline-block;width:12px;height:12px;border-radius:50%;background:${t.color};margin-right:8px;vertical-align:middle"></span>${medal} ${escapeHtml(t.name)}</span><span class="pts">${t.score}</span>`;
+      const color = safeColor(t.color);
+      li.innerHTML = `<span><span style="display:inline-block;width:12px;height:12px;border-radius:50%;background:${color};margin-right:8px;vertical-align:middle"></span>${medal} ${escapeHtml(t.name)}</span><span class="pts">${formatScore(t.score)}</span>`;
       sb.appendChild(li);
     });
     // Individual mini-scoreboard below (informational only — points are team-level)
@@ -879,9 +1119,10 @@ function renderEnd(msg) {
     for (const t of (msg.team_scoreboard || [])) {
       for (const p of msg.scoreboard.filter(pp => pp.team_id === t.id)) {
         const li = document.createElement('li');
+        const color = safeColor(t.color);
         li.style.background = 'var(--panel)';
         li.style.fontSize = '13px';
-        li.innerHTML = `<span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${t.color};margin-right:8px"></span>${escapeHtml(p.name)}${p.id === state.playerId ? ' (you)' : ''}</span><span style="color:var(--muted)">${escapeHtml(t.name)}</span>`;
+        li.innerHTML = `<span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${color};margin-right:8px"></span>${escapeHtml(p.name)}${p.id === state.playerId ? ' (you)' : ''}</span><span style="color:var(--muted)">${escapeHtml(t.name)}</span>`;
         sb.appendChild(li);
       }
     }
@@ -892,7 +1133,7 @@ function renderEnd(msg) {
       else if (i === 1) li.classList.add('silver');
       else if (i === 2) li.classList.add('bronze');
       const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
-      li.innerHTML = `<span>${medal} ${escapeHtml(p.name)}${p.id === state.playerId ? ' (you)' : ''}</span><span class="pts">${p.score}</span>`;
+      li.innerHTML = `<span>${medal} ${escapeHtml(p.name)}${p.id === state.playerId ? ' (you)' : ''}</span><span class="pts">${formatScore(p.score)}</span>`;
       sb.appendChild(li);
     });
   }
@@ -918,6 +1159,7 @@ function renderEnd(msg) {
       <td>${reqCell}</td>
       <td>${decCell}</td>
       <td style="font-family:monospace">${escapeHtml(r.dna_sequence)}</td>
+      <td>${escapeHtml(requestScaleLabel(r))}</td>
       <td style="font-family:monospace">${escapeHtml(r.correct_peptide)}</td>
       <td class="${correctCls}" style="font-family:monospace">${r.submitted_peptide ? escapeHtml(r.submitted_peptide) : '—'}</td>
       <td class="${validCls}">${r.is_dna_valid ? 'yes' : 'no'}</td>
@@ -946,12 +1188,8 @@ function closeNew() { $('modal-new').classList.remove('active'); }
 function submitNew() {
   const name = $('new-protein-name').value.trim();
   const dna = $('new-dna').value.trim();
-  const target = $('new-decrypter').value;
-  if (!name || !dna || !target) { toast('Fill all fields', 'var(--bad)'); return; }
+  if (!name || !dna) { toast('Fill all fields', 'var(--bad)'); return; }
   const payload = { type: 'create_request', protein_name: name, dna_sequence: dna };
-  if (target.startsWith('team:')) payload.decrypter_team_id = target.slice(5);
-  else if (target.startsWith('player:')) payload.decrypter_id = target.slice(7);
-  else payload.decrypter_id = target;  // backwards-compat
   send(payload);
   closeNew();
 }
@@ -976,6 +1214,7 @@ function submitDecrypt() {
 
 function confirmReq(id) { send({ type: 'confirm_decryption', request_id: id }); }
 function rejectReq(id) { send({ type: 'reject_decryption', request_id: id }); }
+function flagInvalid(id) { send({ type: 'flag_invalid_request', request_id: id }); }
 
 //======================================================================
 // Landing & lobby setup
@@ -1013,8 +1252,7 @@ function setupLanding() {
     try {
       const body = {
         host_name: $('host-name').value.trim(),
-        expected_players: parseInt($('expected-players').value, 10),
-        end_window_minutes: [parseFloat($('end-min').value), parseFloat($('end-max').value)],
+        game_duration_minutes: parseFloat($('game-duration').value),
         mode: createMode,
       };
       if (!body.host_name) throw new Error('Name required');
@@ -1023,15 +1261,11 @@ function setupLanding() {
         if (names.length < 2) throw new Error('Need at least 2 team names');
         const palette = ['#f85149', '#58a6ff', '#3fb950', '#d29922', '#a371f7', '#ec6cb9'];
         body.teams = names.map((n, i) => ({ name: n, color: palette[i % palette.length] }));
-        if (body.expected_players < names.length) {
-          throw new Error('Need at least as many players as teams');
-        }
       }
       const r = await api('/api/games', body);
       state.gameId = r.game_id;
       state.playerId = r.player_id;
       state.hostPlayerId = r.host_player_id;
-      state.expectedPlayers = r.expected_players;
       state.codonTable = r.codon_table;
       state.mode = r.mode || 'solo';
       state.teams = r.teams || [];
@@ -1050,7 +1284,6 @@ function setupLanding() {
       state.gameId = r.game_id;
       state.playerId = r.player_id;
       state.hostPlayerId = r.host_player_id;
-      state.expectedPlayers = r.expected_players;
       state.codonTable = r.codon_table;
       state.mode = r.mode || 'solo';
       state.teams = r.teams || [];

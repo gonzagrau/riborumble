@@ -2,61 +2,82 @@
 
 A real-time multiplayer LAN-party game where players are simultaneously
 biochemists translating each other's "DNA" messages into polypeptide
-"passwords". The trick: the DNA is on a piece of paper that gets handed
-physically between players, while the app handles state, scoring, and
-the silently lurking final reckoning.
+"passwords". DNA and translations flow entirely through the app while it
+handles state, scoring, and the silently lurking final reckoning.
 
 ## How the game plays
 
 Each player is both a **requester** and a **decrypter** at all times.
 
-- As a requester: invent a protein name and a DNA sequence, log them in
-  the app, then hand a slip of paper with `protein - dna` to the
-  decrypter of your choice.
-- As a decrypter: receive the paper, work out the polypeptide using the
-  printed codon table, write it on a new slip of paper (`protein - peptide`),
-  hand it back to the requester, and log your guess in the app.
-- The requester then **confirms** or **rejects** the decryption.
+- As a requester: invent a protein name and a DNA sequence and log them
+  in the app. The app randomly assigns another player/team to decrypt it.
+- As a decrypter: open received requests in the app, read the DNA there,
+  work out the polypeptide using the codon table, and submit your guess
+  in the app. If the DNA itself is invalid, flag it instead.
+- If the decrypter submits a peptide, the requester then **confirms** or
+  **rejects** the decryption.
+- Everyone sees only their own live score (or their team's live score).
+  The full leaderboard stays hidden until the end.
 
 ### Scoring
 
 During the game:
 
+Every score event is multiplied by:
+
+```
+m = 1 + complete_codon_count / 10
+```
+
+So a 5-amino-acid request has `m = 1.5`, and a base `+3` becomes `+4.5`.
+
 | Requester's call | DNA | Submission | Decrypter | Requester |
 |---|---|---|---|---|
-| Confirm | valid | correct | **+3** | 0 |
-| Confirm | valid | wrong | **+3** | **−2** |
-| Confirm | invalid | (any) | **+3** | **−2** |
-| Reject | valid | correct | **−3** | **−2** |
-| Reject | valid | wrong | **−3** | 0 |
-| Reject | invalid | (any) | 0 | **−3** |
+| Confirm | valid | correct | **+3m** | **+1m** |
+| Confirm | valid | wrong | **−3m** | **−3m** |
+| Confirm | invalid | peptide submitted | **−3m** | **−6m** |
+| Reject | valid | correct | **+3m** | **−3m** |
+| Reject | valid | wrong | **−3m** | **+1m** |
+| Reject | invalid | peptide submitted | **−3m** | **−2m** |
+
+Receiver-side invalid flag:
+
+| Receiver's call | DNA | Receiver | Requester |
+|---|---|---|---|
+| Flag invalid | invalid | **+1m** | **−3m** |
+| Flag invalid | valid | **−3m** | 0 |
 
 At game end (sweep):
 
 | Pending state | Effect |
 |---|---|
-| Paper never decrypted | Decrypter **−2** |
-| Submission never resolved | Decrypter **+2** |
+| Request never decrypted | Decrypter **−2m** |
+| Invalid request never decrypted | Decrypter **−2m**, requester **−3m** |
+| Correct submission never resolved | Decrypter **+2m**, requester **−2m** |
+| Wrong submission never resolved | Decrypter **−2m**, requester **−2m** |
+| Invalid request with unresolved peptide submission | Decrypter **−2m**, requester **−5m** |
 
 Two key consequences:
-- A wrongly-decrypted answer is worth **+2** if the requester forgets to
-  reject in time. Sit on bad guesses; the clock is your friend.
-- Conversely, the requester is *also* on the clock: forgetting to confirm
-  a correct answer leaks +2 to the decrypter you wanted to deny.
-- The requester is graded too. Confirming a wrong answer or rejecting a
-  correct one costs the requester **−2** on top of whatever happens to
-  the decrypter. Pay attention — careless judgments are punished.
-- The server silently knows the truth but **never tells anyone during the
-  game**. Players are free to confirm wrong answers or reject correct
-  ones — and they will eat the consequence according to the rules above.
+- Decryption is graded against the truth, not against the requester's
+  decision. A correct peptide is worth **+3m** even if rejected; a wrong
+  peptide costs **−3m** even if accepted.
+- Requester QC is graded separately. Good QC is worth **+1m**; bad QC
+  costs **−3m**.
+- Sending invalid DNA carries its own **−3m** penalty. If the sender also
+  accepts a bogus peptide for that invalid request, both mistakes count.
+- Decrypters can flag invalid DNA directly. Correct flags earn **+1m**
+  and punish the sender; false flags cost the decrypter **−3m**.
+- The server silently knows the truth but does not reveal the true peptide
+  or validity flag during the game. Live score changes can still expose
+  the consequence of a decision to the affected player/team.
 
 ### When the game ends
 
-The host configures a window (e.g. 15–25 minutes). At game start the
-server picks a random instant within that window and schedules the
-guillotine. When it fires, all pending requests are swept according to
-the rules above, scores are revealed, and every request — including
-its true peptide and the validity flag — is shown to everyone.
+The host configures a fixed duration (e.g. 15 minutes). At game start the
+server schedules the guillotine for exactly that many minutes later. When
+it fires, all pending requests are swept according to the rules above,
+scores are revealed, and every request — including its true peptide and
+the validity flag — is shown to everyone.
 
 ### Team mode
 
@@ -67,11 +88,12 @@ and configure team names. In team mode:
 - Each team has a shared "sent" stack and a shared "received" stack.
   Any teammate can submit a decryption, and any teammate can confirm
   or reject a pending decision.
-- Requests target an *opposing team* (not a specific person). Any member
-  of the target team can pick up the paper and decrypt it. Same-team
-  sends are rejected.
+- Requests are assigned to a random *opposing team* (not a specific
+  person). Any member of that team can decrypt it in the app.
 - Points go to the team ledger. The end-game reveal shows the team
   scoreboard, then individuals grouped by team.
+- During play, teammates see only their own team's live score, not the
+  whole leaderboard.
 - An audit trail records who initiated each request, who decrypted,
   and who confirmed/rejected — handy for post-game accountability
   ("Bob, why did you confirm that mess?").
@@ -90,6 +112,10 @@ python main.py             # or: uvicorn main:app --host 0.0.0.0 --port 8000
 The server binds to `0.0.0.0:8000` by default (so other devices on your
 LAN can reach it). Open `http://<host-lan-ip>:8000/` in a browser.
 
+Important: run a single server process/worker. Game state lives in
+process memory, so multiple Uvicorn workers would split players across
+different game instances.
+
 ### Finding your LAN IP
 
 - **macOS / Linux**: `ipconfig getifaddr en0` or `hostname -I`
@@ -105,14 +131,14 @@ created the game. They open the link, type their name, and they're in.
 3. Enter your name and hit Join.
 4. Wait for the host to start.
 
-## Paper handout for the codon table
+## Optional codon table handout
 
-You need physical paper slips for the gameplay, and a printed cheat
-sheet for the codon table. The codon table is shown on the lobby screen
-and also available at `GET /api/games/<game_id>/codon-table` if you'd
-rather print from a terminal.
+DNA and translations are handled in-app. A printed codon-table cheat
+sheet is still useful and is shown on the lobby screen. It is also
+available at `GET /api/games/<game_id>/codon-table` if you'd rather
+print from a terminal.
 
-Default table (10 codons, 7 AAs + Stop):
+Default table (10 codons, 9 AAs + Stop):
 
 ```
 ATG→Met  GTT→Val  TTT→Phe  GAA→Glu  AAA→Lys
@@ -142,11 +168,38 @@ same game restores the player's state. Tabs and laptops dying is fine.
 Environment variables read by `main.py`:
 - `HOST` (default `0.0.0.0`)
 - `PORT` (default `8000`)
+- `GAME_CLEANUP_AFTER_SECONDS` (default `21600`; set to `-1` to keep
+  ended games in memory until restart)
 
 Game-time configuration (set when creating the game in the UI):
-- Number of players (2–20)
-- End window in minutes (min, max)
+- Game duration in minutes
 - Codon table (defaults provided, override via the API)
+
+Runtime limits:
+- Player names: 40 characters
+- Players per game: 100
+- Team names: 32 characters
+- Protein names: 60 characters
+- DNA requests: 300 bases after whitespace removal
+- Peptide guesses: 400 characters
+- Team colors: hex colors only, e.g. `#58a6ff`
+- Custom codon tables: at most 64 codons, using amino acids supported by
+  the peptide parser
+
+## Testing
+
+The test suite uses Python's standard `unittest` runner, so no extra test
+dependency is required.
+
+```bash
+venv/bin/python -m unittest discover -v
+```
+
+The suite covers codon normalization/translation, custom table validation,
+peptide matching, solo and team state transitions, every scoring-table
+outcome, invalid-DNA flagging, end-game sweep scoring, reconnect-after-end
+reveal behavior, cleanup of ended games, private live-score payloads, API
+helper behavior, and frontend JavaScript syntax when `node` is available.
 
 ## File layout
 
@@ -156,6 +209,7 @@ riborumble/
 ├── game.py           # state machine, scoring (no network code)
 ├── main.py           # FastAPI app: REST + WebSocket + static
 ├── static/index.html # single-page frontend
+├── tests/            # unittest coverage for codon, game, API, and frontend glue
 ├── requirements.txt
 └── README.md
 ```

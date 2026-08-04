@@ -35,28 +35,31 @@ GAMES: dict[str, gm.Game] = {}
 # have two sockets during a reconnect; broadcasting to all is safe.
 SOCKETS: dict[tuple[str, str], set[WebSocket]] = {}
 END_TASKS: dict[str, asyncio.Task] = {}
+CLEANUP_TASKS: dict[str, asyncio.Task] = {}
 LOCK = asyncio.Lock()
+GAME_CLEANUP_AFTER_SECONDS = float(os.environ.get("GAME_CLEANUP_AFTER_SECONDS", "21600"))
 
 
 # --- Request bodies -------------------------------------------------------
 
 
 class TeamSpec(BaseModel):
-    name: str
-    color: str = "#888"
+    name: str = Field(min_length=1, max_length=gm.MAX_TEAM_NAME_LENGTH)
+    color: str = Field(default="#888", pattern=gm.HEX_COLOR_PATTERN)
 
 
 class CreateGameBody(BaseModel):
-    host_name: str
-    expected_players: int = Field(ge=2, le=20)
-    end_window_minutes: tuple[float, float] = (15.0, 25.0)
-    codon_table: dict[str, str] | None = None
+    host_name: str = Field(min_length=1, max_length=gm.MAX_PLAYER_NAME_LENGTH)
+    expected_players: int | None = Field(default=None, ge=2, le=gm.MAX_EXPECTED_PLAYERS)
+    game_duration_minutes: float = Field(default=15.0, gt=0)
+    end_window_minutes: tuple[float, float] | None = None
+    codon_table: dict[str, str] | None = Field(default=None, max_length=64)
     mode: str = "solo"  # "solo" or "teams"
     teams: list[TeamSpec] | None = None
 
 
 class JoinGameBody(BaseModel):
-    name: str
+    name: str = Field(min_length=1, max_length=gm.MAX_PLAYER_NAME_LENGTH)
 
 
 # --- REST endpoints -------------------------------------------------------
@@ -70,10 +73,12 @@ async def create_game(body: CreateGameBody) -> dict[str, Any]:
         except ValueError:
             raise HTTPException(400, f"Invalid mode: {body.mode}")
         try:
+            duration_minutes = _duration_minutes_from_body(body)
+            max_players = body.expected_players or gm.MAX_EXPECTED_PLAYERS
             game, host = gm.new_game(
                 host_name=body.host_name,
-                expected_players=body.expected_players,
-                end_window_minutes=body.end_window_minutes,
+                expected_players=max_players,
+                game_duration_minutes=duration_minutes,
                 codon_table=body.codon_table or dict(DEFAULT_CODON_TABLE),
                 mode=mode,
                 teams=[t.model_dump() for t in body.teams] if body.teams else None,
@@ -82,14 +87,15 @@ async def create_game(body: CreateGameBody) -> dict[str, Any]:
             raise HTTPException(400, str(e))
         GAMES[game.id] = game
         log.info(
-            "Created game %s (host=%s, expect=%d, mode=%s)",
-            game.id, host.name, body.expected_players, mode.value,
+            "Created game %s (host=%s, max=%d, mode=%s, duration=%.1fm)",
+            game.id, host.name, max_players, mode.value, duration_minutes,
         )
         return {
             "game_id": game.id,
             "player_id": host.id,
             "host_player_id": host.id,
             "expected_players": game.expected_players,
+            "game_duration_minutes": game.duration_seconds / 60,
             "codon_table": game.codon_table,
             "mode": game.mode.value,
             "teams": [gm._team_view(t) for t in game.teams.values()],
@@ -114,6 +120,7 @@ async def join_game(game_id: str, body: JoinGameBody) -> dict[str, Any]:
             "player_id": player.id,
             "host_player_id": game.host_player_id,
             "expected_players": game.expected_players,
+            "game_duration_minutes": game.duration_seconds / 60,
             "codon_table": game.codon_table,
             "mode": game.mode.value,
             "teams": [gm._team_view(t) for t in game.teams.values()],
@@ -131,6 +138,16 @@ async def get_codon_table(game_id: str) -> dict[str, str]:
 # --- WebSocket ------------------------------------------------------------
 
 
+def _duration_minutes_from_body(body: CreateGameBody) -> float:
+    """Prefer the fixed duration field; accept exact legacy tuples only."""
+    if "game_duration_minutes" in body.model_fields_set or body.end_window_minutes is None:
+        return body.game_duration_minutes
+    lo, hi = body.end_window_minutes
+    if lo != hi:
+        raise ValueError("Game duration must be a single fixed number of minutes")
+    return lo
+
+
 @app.websocket("/ws/{game_id}")
 async def websocket_endpoint(ws: WebSocket, game_id: str, player_id: str) -> None:
     await ws.accept()
@@ -145,9 +162,12 @@ async def websocket_endpoint(ws: WebSocket, game_id: str, player_id: str) -> Non
     game.players[player_id].connected = True
     log.info("WS connected: game=%s player=%s", game_id, game.players[player_id].name)
 
-    # Immediately send a state snapshot and a lobby update so everyone refreshes
-    await ws.send_json(gm.state_snapshot_for(game, player_id))
-    await _broadcast_lobby(game)
+    # Immediately send the right snapshot for the current phase.
+    if game.phase == gm.Phase.ENDED:
+        await ws.send_json(gm.end_game(game))
+    else:
+        await ws.send_json(gm.state_snapshot_for(game, player_id))
+        await _broadcast_lobby(game)
 
     try:
         while True:
@@ -170,7 +190,8 @@ async def websocket_endpoint(ws: WebSocket, game_id: str, player_id: str) -> Non
             if player_id in game.players:
                 game.players[player_id].connected = False
         log.info("WS disconnected: game=%s player=%s", game_id, player_id)
-        await _broadcast_lobby(game)
+        if game.phase != gm.Phase.ENDED:
+            await _broadcast_lobby(game)
 
 
 # --- Message handlers -----------------------------------------------------
@@ -180,7 +201,12 @@ async def _handle_client_message(
     game: gm.Game, player_id: str, msg: dict, ws: WebSocket
 ) -> None:
     mtype = msg.get("type")
+    post_actions: list[tuple[Any, ...]] = []
     try:
+        if mtype == "ping":
+            await ws.send_json({"type": "pong"})
+            return
+
         async with LOCK:
             if mtype == "start_game":
                 end_at = gm.start_game(game, player_id)
@@ -191,12 +217,12 @@ async def _handle_client_message(
                     game.id,
                     end_at - (game.started_at or 0),
                 )
-                await _broadcast(game, {"type": "game_started"})
-                await _broadcast_snapshots(game)
+                post_actions.append(("broadcast", {"type": "game_started"}))
+                post_actions.append(("snapshots", None))
 
             elif mtype == "assign_team":
                 gm.assign_team(game, player_id, msg.get("team_id"))
-                await _broadcast_lobby(game)
+                post_actions.append(("lobby", None))
 
             elif mtype == "create_request":
                 r = gm.create_request(
@@ -207,13 +233,19 @@ async def _handle_client_message(
                     decrypter_id=msg.get("decrypter_id"),
                     decrypter_team_id=msg.get("decrypter_team_id"),
                 )
-                await _broadcast_to_requester_side(
-                    game, r,
-                    {"type": "outgoing_update", "request": gm._request_view_for_requester(r)},
+                post_actions.append(
+                    (
+                        "requester_side",
+                        r,
+                        {"type": "outgoing_update", "request": gm._request_view_for_requester(r)},
+                    )
                 )
-                await _broadcast_to_decrypter_side(
-                    game, r,
-                    {"type": "incoming_update", "request": gm._request_view_for_decrypter(r)},
+                post_actions.append(
+                    (
+                        "decrypter_side",
+                        r,
+                        {"type": "incoming_update", "request": gm._request_view_for_decrypter(r)},
+                    )
                 )
 
             elif mtype == "submit_decryption":
@@ -223,33 +255,78 @@ async def _handle_client_message(
                     request_id=msg["request_id"],
                     peptide_guess=msg["peptide_guess"],
                 )
-                await _broadcast_to_requester_side(
-                    game, r,
-                    {"type": "outgoing_update", "request": gm._request_view_for_requester(r)},
+                post_actions.append(
+                    (
+                        "requester_side",
+                        r,
+                        {"type": "outgoing_update", "request": gm._request_view_for_requester(r)},
+                    )
                 )
-                await _broadcast_to_decrypter_side(
-                    game, r,
-                    {"type": "incoming_update", "request": gm._request_view_for_decrypter(r)},
+                post_actions.append(
+                    (
+                        "decrypter_side",
+                        r,
+                        {"type": "incoming_update", "request": gm._request_view_for_decrypter(r)},
+                    )
                 )
 
             elif mtype == "confirm_decryption":
-                r, _ = gm.confirm_decryption(game, player_id, msg["request_id"])
-                await _broadcast_decision(game, r, "confirmed")
+                r, deltas = gm.confirm_decryption(game, player_id, msg["request_id"])
+                post_actions.append(("decision", r, "confirmed"))
+                post_actions.append(("sound_from_deltas", [player_id], deltas))
+                post_actions.append(("sound_from_deltas", _request_decrypter_actor_ids(r), deltas))
+                post_actions.append(("scores", None))
 
             elif mtype == "reject_decryption":
-                r, _ = gm.reject_decryption(game, player_id, msg["request_id"])
-                await _broadcast_decision(game, r, "rejected")
+                r, deltas = gm.reject_decryption(game, player_id, msg["request_id"])
+                post_actions.append(("decision", r, "rejected"))
+                post_actions.append(("sound_from_deltas", [player_id], deltas))
+                post_actions.append(("sound_from_deltas", _request_decrypter_actor_ids(r), deltas))
+                post_actions.append(("scores", None))
 
-            elif mtype == "ping":
-                await ws.send_json({"type": "pong"})
+            elif mtype == "flag_invalid_request":
+                r, deltas = gm.flag_invalid_request(game, player_id, msg["request_id"])
+                post_actions.append(("invalid_flag", r))
+                post_actions.append(("sound_from_deltas", [player_id], deltas))
+                post_actions.append(("sound_from_deltas", [r.requester_id], deltas))
+                post_actions.append(("scores", None))
 
             else:
-                await ws.send_json(
-                    {"type": "error", "message": f"Unknown message type: {mtype}"}
-                )
+                post_actions.append(("direct_error", f"Unknown message type: {mtype}"))
     except (ValueError, PermissionError, KeyError) as e:
         log.warning("Client error from %s on %s: %s", player_id, mtype, e)
         await ws.send_json({"type": "error", "message": str(e)})
+        return
+
+    for action in post_actions:
+        kind = action[0]
+        if kind == "broadcast":
+            await _broadcast(game, action[1])
+        elif kind == "snapshots":
+            await _broadcast_snapshots(game)
+        elif kind == "lobby":
+            await _broadcast_lobby(game)
+        elif kind == "requester_side":
+            _, request, payload = action
+            await _broadcast_to_requester_side(game, request, payload)
+        elif kind == "decrypter_side":
+            _, request, payload = action
+            await _broadcast_to_decrypter_side(game, request, payload)
+        elif kind == "decision":
+            _, request, decision = action
+            await _broadcast_decision(game, request, decision)
+        elif kind == "invalid_flag":
+            await _broadcast_invalid_flag(game, action[1])
+        elif kind == "scores":
+            await _broadcast_scores(game)
+        elif kind == "sound":
+            _, player_ids, sound = action
+            await _broadcast_sound(game, player_ids, sound)
+        elif kind == "sound_from_deltas":
+            _, player_ids, deltas = action
+            await _broadcast_sound_from_deltas(game, player_ids, deltas)
+        elif kind == "direct_error":
+            await ws.send_json({"type": "error", "message": action[1]})
 
 
 # --- Broadcast helpers ----------------------------------------------------
@@ -271,6 +348,43 @@ async def _broadcast(game: gm.Game, payload: dict) -> None:
 async def _broadcast_to(game: gm.Game, player_id: str, payload: dict) -> None:
     for ws in list(SOCKETS.get((game.id, player_id), ())):
         await _send_to_socket(ws, payload)
+
+
+async def _broadcast_sound(game: gm.Game, player_ids: list[str], sound: str) -> None:
+    """Send a private sound cue to the listed players."""
+    payload = {"type": "sound_effect", "sound": sound}
+    for player_id in dict.fromkeys(pid for pid in player_ids if pid in game.players):
+        await _broadcast_to(game, player_id, payload)
+
+
+async def _broadcast_sound_from_deltas(
+    game: gm.Game, player_ids: list[str], deltas: list[tuple[str, float]]
+) -> None:
+    for player_id in dict.fromkeys(pid for pid in player_ids if pid in game.players):
+        total = _player_delta_total(game, player_id, deltas)
+        if total > 0:
+            await _broadcast_to(game, player_id, {"type": "sound_effect", "sound": "correct"})
+        elif total < 0:
+            await _broadcast_to(game, player_id, {"type": "sound_effect", "sound": "wrong"})
+
+
+def _player_delta_total(
+    game: gm.Game, player_id: str, deltas: list[tuple[str, float]]
+) -> float:
+    if game.mode == gm.Mode.TEAMS:
+        target_id = game.players[player_id].team_id
+    else:
+        target_id = player_id
+    return round(sum(delta for credited_id, delta in deltas if credited_id == target_id), 1)
+
+
+def _request_decrypter_actor_ids(r: gm.Request) -> list[str]:
+    """The player who actually submitted, falling back to the solo assignee."""
+    if r.submitted_by_id is not None:
+        return [r.submitted_by_id]
+    if r.decrypter_id is not None:
+        return [r.decrypter_id]
+    return []
 
 
 def _team_member_ids(game: gm.Game, team_id: str | None) -> list[str]:
@@ -317,6 +431,16 @@ async def _broadcast_snapshots(game: gm.Game) -> None:
         await _broadcast_to(game, player_id, snap)
 
 
+async def _broadcast_scores(game: gm.Game) -> None:
+    """Broadcast only each recipient's own score/team score."""
+    for player_id in game.players:
+        await _broadcast_to(
+            game,
+            player_id,
+            {"type": "score_update", "score": gm.score_view_for(game, player_id)},
+        )
+
+
 async def _broadcast_decision(game: gm.Game, r: gm.Request, decision: str) -> None:
     """Notify both sides of a confirm/reject."""
     await _broadcast_to_requester_side(
@@ -330,6 +454,18 @@ async def _broadcast_decision(game: gm.Game, r: gm.Request, decision: str) -> No
             "request": gm._request_view_for_decrypter(r),
             "decision": decision,
         },
+    )
+
+
+async def _broadcast_invalid_flag(game: gm.Game, r: gm.Request) -> None:
+    """Notify both sides when a receiver claims invalid DNA."""
+    await _broadcast_to_requester_side(
+        game, r,
+        {"type": "outgoing_update", "request": gm._request_view_for_requester(r)},
+    )
+    await _broadcast_to_decrypter_side(
+        game, r,
+        {"type": "invalid_flagged", "request": gm._request_view_for_decrypter(r)},
     )
 
 
@@ -353,6 +489,28 @@ async def _run_ender(game_id: str, end_at: float) -> None:
     # Broadcast outside the lock — sending JSON over sockets shouldn't
     # block other state mutations
     await _broadcast(game, reveal)
+    if GAME_CLEANUP_AFTER_SECONDS >= 0:
+        CLEANUP_TASKS[game_id] = asyncio.create_task(
+            _cleanup_game_later(game_id, GAME_CLEANUP_AFTER_SECONDS)
+        )
+
+
+async def _cleanup_game_later(game_id: str, delay: float) -> None:
+    """Remove ended games after a grace period so final reveals remain reconnectable."""
+    try:
+        await asyncio.sleep(delay)
+    except asyncio.CancelledError:
+        return
+    async with LOCK:
+        game = GAMES.get(game_id)
+        if game is None or game.phase != gm.Phase.ENDED:
+            return
+        GAMES.pop(game_id, None)
+        END_TASKS.pop(game_id, None)
+        CLEANUP_TASKS.pop(game_id, None)
+        for key in [key for key in SOCKETS if key[0] == game_id]:
+            SOCKETS.pop(key, None)
+        log.info("Cleaned up ended game %s", game_id)
 
 
 # --- Static frontend ------------------------------------------------------
@@ -361,10 +519,20 @@ STATIC_DIR = Path(__file__).parent / "static"
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
+SOUNDS_DIR = Path(__file__).parent / "sounds"
+if SOUNDS_DIR.exists():
+    app.mount("/sounds", StaticFiles(directory=str(SOUNDS_DIR)), name="sounds")
+
 
 @app.get("/")
 async def index() -> FileResponse:
     return FileResponse(str(STATIC_DIR / "index.html"))
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+@app.head("/favicon.ico", include_in_schema=False)
+async def favicon() -> FileResponse:
+    return FileResponse(str(STATIC_DIR / "favicon.png"), media_type="image/png")
 
 
 @app.get("/healthz")

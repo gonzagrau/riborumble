@@ -10,6 +10,7 @@ to reason about and test.
 from __future__ import annotations
 
 import secrets
+import re
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -18,7 +19,10 @@ from typing import Any
 from codon import (
     DEFAULT_CODON_TABLE,
     is_dna_valid,
+    normalize_codon_table,
+    normalize_dna,
     peptides_match,
+    sequence_amino_acid_length,
     translate_dna,
 )
 
@@ -34,6 +38,7 @@ class RequestState(str, Enum):
     PENDING_APPROVAL = "pending_approval"
     CONFIRMED = "confirmed"
     REJECTED = "rejected"
+    FLAGGED_INVALID = "flagged_invalid"
 
 
 class Mode(str, Enum):
@@ -43,12 +48,26 @@ class Mode(str, Enum):
 
 # --- Scoring constants ----------------------------------------------------
 
-POINTS_CORRECT_CONFIRMED = +3   # decrypter rewarded for confirmed answer
-POINTS_REJECTED = -3            # decrypter penalized when requester rejects
-POINTS_INVALID_DNA_REJECTED = -3  # requester penalized when caught sending garbage
-POINTS_REQUESTER_BAD_DECISION = -2  # requester penalized for confirm-wrong or reject-correct
-POINTS_END_AWAITING = -2        # decrypter penalized for unread paper at game end
-POINTS_END_PENDING = +2         # decrypter rewarded for unresolved submission at game end
+POINTS_CORRECT_DECRYPTION = +3  # decrypter rewarded for a correct peptide
+POINTS_WRONG_DECRYPTION = -3    # decrypter penalized for a wrong peptide or missing invalid DNA
+POINTS_REQUESTER_GOOD_DECISION = +1  # requester rewarded for correct QC
+POINTS_REQUESTER_BAD_DECISION = -3   # requester penalized for bad QC
+POINTS_INVALID_DNA_CAUGHT = +1   # decrypter rewarded for catching invalid DNA
+POINTS_FALSE_INVALID_FLAG = -3   # decrypter penalized for wrongly flagging valid DNA
+POINTS_INVALID_DNA_SENT = -3    # requester penalized for sending invalid DNA
+POINTS_END_AWAITING = -2        # decrypter penalized for undecrypted request at game end
+POINTS_END_PENDING_CORRECT = +2  # decrypter rewarded for unresolved correct submission
+POINTS_END_PENDING_WRONG = -2    # decrypter penalized for unresolved wrong submission
+POINTS_END_PENDING_REQUESTER = -2  # requester penalized for unresolved QC
+
+MAX_PLAYER_NAME_LENGTH = 40
+MAX_EXPECTED_PLAYERS = 100
+MAX_TEAM_NAME_LENGTH = 32
+MAX_PROTEIN_NAME_LENGTH = 60
+MAX_DNA_LENGTH = 300
+MAX_PEPTIDE_LENGTH = 400
+HEX_COLOR_PATTERN = r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$"
+_HEX_COLOR_RE = re.compile(HEX_COLOR_PATTERN)
 
 
 # --- Data classes ---------------------------------------------------------
@@ -59,14 +78,14 @@ class Team:
     id: str
     name: str
     color: str           # hex color string, e.g. "#f85149"
-    score: int = 0
+    score: float = 0.0
 
 
 @dataclass
 class Player:
     id: str
     name: str
-    score: int = 0
+    score: float = 0.0
     connected: bool = False
     team_id: str | None = None   # set only in team mode
 
@@ -79,9 +98,11 @@ class Request:
     decrypter_team_id: str | None  # set in TEAMS mode; None in SOLO mode
     requester_team_id: str | None  # set in TEAMS mode for routing; None in SOLO mode
     protein_name: str
-    dna_sequence: str            # truth, never sent to decrypter
+    dna_sequence: str            # DNA shown to both sides; validity/truth stay hidden
     correct_peptide: str         # canonical form, never sent to anyone during play
     is_dna_valid: bool           # internal flag, never sent to anyone during play
+    sequence_aa_length: int
+    point_multiplier: float
     state: RequestState = RequestState.AWAITING_DECRYPTION
     submitted_peptide: str | None = None
     submitted_peptide_is_correct: bool | None = None
@@ -97,7 +118,7 @@ class Game:
     id: str
     host_player_id: str
     expected_players: int
-    end_window_seconds: tuple[float, float]
+    duration_seconds: float
     codon_table: dict[str, str]
     mode: Mode = Mode.SOLO
     phase: Phase = Phase.LOBBY
@@ -129,6 +150,17 @@ def _team_view(t: Team) -> Event:
     return {"id": t.id, "name": t.name, "color": t.color}
 
 
+def score_view_for(game: Game, player_id: str) -> Event:
+    """Private score payload for one player: own score in solo, own team score in teams."""
+    player = game.players[player_id]
+    if game.mode == Mode.TEAMS:
+        if player.team_id is None:
+            return {"scope": "team", "id": None, "name": None, "score": 0.0}
+        team = game.teams[player.team_id]
+        return {"scope": "team", "id": team.id, "name": team.name, "score": team.score}
+    return {"scope": "player", "id": player.id, "name": player.name, "score": player.score}
+
+
 def _request_view_for_requester(r: Request) -> Event:
     """What a requester (or their teammate in team mode) sees about an outgoing request."""
     return {
@@ -139,6 +171,8 @@ def _request_view_for_requester(r: Request) -> Event:
         "decrypter_team_id": r.decrypter_team_id,  # None in solo mode
         "protein_name": r.protein_name,
         "dna_sequence": r.dna_sequence,            # requester side sees DNA
+        "sequence_aa_length": r.sequence_aa_length,
+        "point_multiplier": r.point_multiplier,
         "state": r.state.value,
         "submitted_peptide": r.submitted_peptide,
         "submitted_by_id": r.submitted_by_id,      # audit: which teammate decrypted
@@ -147,13 +181,16 @@ def _request_view_for_requester(r: Request) -> Event:
 
 
 def _request_view_for_decrypter(r: Request) -> Event:
-    """What a decrypter (or their teammate in team mode) sees — no DNA, no truth."""
+    """What a decrypter (or their teammate in team mode) sees — no truth."""
     return {
         "id": r.id,
         "role": "decrypter",
         "requester_id": r.requester_id,
         "requester_team_id": r.requester_team_id,  # None in solo mode
         "protein_name": r.protein_name,
+        "dna_sequence": r.dna_sequence,
+        "sequence_aa_length": r.sequence_aa_length,
+        "point_multiplier": r.point_multiplier,
         "state": r.state.value,
         "submitted_peptide": r.submitted_peptide,
         "submitted_by_id": r.submitted_by_id,
@@ -199,6 +236,7 @@ def state_snapshot_for(game: Game, player_id: str) -> Event:
         "mode": game.mode.value,
         "players": [_player_view(p) for p in game.players.values()],
         "teams": [_team_view(t) for t in game.teams.values()],
+        "score": score_view_for(game, player_id),
         "expected_players": game.expected_players,
         "host_player_id": game.host_player_id,
         "codon_table": game.codon_table,
@@ -214,10 +252,42 @@ def _new_id(prefix: str) -> str:
     return f"{prefix}_{secrets.token_urlsafe(6)}"
 
 
+def _clean_text(value: str, field_name: str, max_length: int) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{field_name} must be text")
+    cleaned = value.strip()
+    if not cleaned:
+        raise ValueError(f"{field_name} required")
+    if len(cleaned) > max_length:
+        raise ValueError(f"{field_name} must be at most {max_length} characters")
+    return cleaned
+
+
+def _clean_dna(value: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError("DNA sequence must be text")
+    cleaned = value.strip()
+    if not cleaned:
+        raise ValueError("DNA sequence required")
+    normalized_length = len(normalize_dna(cleaned))
+    if normalized_length > MAX_DNA_LENGTH:
+        raise ValueError(f"DNA sequence must be at most {MAX_DNA_LENGTH} bases")
+    return cleaned
+
+
+def _clean_team_color(value: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError("Team color must be text")
+    cleaned = value.strip()
+    if not _HEX_COLOR_RE.fullmatch(cleaned):
+        raise ValueError("Team color must be a hex color like #58a6ff")
+    return cleaned
+
+
 def new_game(
     host_name: str,
     expected_players: int,
-    end_window_minutes: tuple[float, float],
+    game_duration_minutes: float | tuple[float, float],
     codon_table: dict[str, str] | None = None,
     mode: Mode = Mode.SOLO,
     teams: list[dict[str, str]] | None = None,
@@ -231,37 +301,52 @@ def new_game(
     """
     if expected_players < 2:
         raise ValueError("Need at least 2 players")
-    lo, hi = end_window_minutes
-    if not (0 < lo <= hi):
-        raise ValueError("Invalid end window")
-    host = Player(id=_new_id("p"), name=host_name.strip())
-    if not host.name:
-        raise ValueError("Host name required")
+    if expected_players > MAX_EXPECTED_PLAYERS:
+        raise ValueError(f"Need at most {MAX_EXPECTED_PLAYERS} players")
+    duration_minutes = _clean_game_duration_minutes(game_duration_minutes)
+    host = Player(
+        id=_new_id("p"),
+        name=_clean_text(host_name, "Host name", MAX_PLAYER_NAME_LENGTH),
+    )
 
     game = Game(
         id=_new_id("g"),
         host_player_id=host.id,
         expected_players=expected_players,
-        end_window_seconds=(lo * 60, hi * 60),
-        codon_table=codon_table or dict(DEFAULT_CODON_TABLE),
+        duration_seconds=duration_minutes * 60,
+        codon_table=normalize_codon_table(codon_table or dict(DEFAULT_CODON_TABLE)),
         mode=mode,
     )
 
     if mode == Mode.TEAMS:
         if not teams or len(teams) < 2:
             raise ValueError("Team mode needs at least 2 teams")
-        if expected_players < len(teams):
-            raise ValueError("Not enough players for that many teams")
         for spec in teams:
-            tname = spec.get("name", "").strip()
-            tcolor = spec.get("color", "#888")
-            if not tname:
-                raise ValueError("Each team needs a name")
+            tname = _clean_text(
+                spec.get("name", ""), "Team name", MAX_TEAM_NAME_LENGTH
+            )
+            tcolor = _clean_team_color(spec.get("color", "#888"))
             t = Team(id=_new_id("t"), name=tname, color=tcolor)
             game.teams[t.id] = t
 
     game.players[host.id] = host
     return game, host
+
+
+def _clean_game_duration_minutes(value: float | tuple[float, float]) -> float:
+    """Return one fixed positive duration in minutes."""
+    if isinstance(value, tuple):
+        lo, hi = value
+        if lo != hi:
+            raise ValueError("Game duration must be a single fixed number of minutes")
+        value = lo
+    try:
+        duration = float(value)
+    except (TypeError, ValueError):
+        raise ValueError("Invalid game duration")
+    if duration <= 0:
+        raise ValueError("Invalid game duration")
+    return duration
 
 
 def join_game(game: Game, name: str) -> Player:
@@ -271,9 +356,7 @@ def join_game(game: Game, name: str) -> Player:
     works in any phase; capacity check only applies to fresh joins
     during LOBBY.
     """
-    name = name.strip()
-    if not name:
-        raise ValueError("Name required")
+    name = _clean_text(name, "Name", MAX_PLAYER_NAME_LENGTH)
     existing = next(
         (p for p in game.players.values() if p.name.lower() == name.lower()),
         None,
@@ -282,7 +365,7 @@ def join_game(game: Game, name: str) -> Player:
         return existing
     if game.phase != Phase.LOBBY:
         raise ValueError("Game already started; you can only rejoin under your existing name")
-    if len(game.players) >= game.expected_players:
+    if len(game.players) >= MAX_EXPECTED_PLAYERS:
         raise ValueError("Game is full")
     p = Player(id=_new_id("p"), name=name)
     game.players[p.id] = p
@@ -305,43 +388,43 @@ def assign_team(game: Game, player_id: str, team_id: str | None) -> Player:
 
 def start_game(game: Game, by_player_id: str) -> float:
     """
-    Host transitions the game to IN_PROGRESS and a random end time is
-    chosen within the configured window. Returns the absolute end
-    timestamp so the web layer can schedule the ender.
+    Host transitions the game to IN_PROGRESS and schedules the exact
+    configured stop time. Returns the absolute end timestamp so the web
+    layer can schedule the ender.
     """
     if by_player_id != game.host_player_id:
         raise PermissionError("Only the host can start the game")
     if game.phase != Phase.LOBBY:
         raise ValueError("Game already started")
-    if len(game.players) < game.expected_players:
-        raise ValueError(
-            f"Waiting for players ({len(game.players)}/{game.expected_players})"
-        )
+    if len(game.players) < 2:
+        raise ValueError("Need at least 2 players to start")
     if game.mode == Mode.TEAMS:
-        # Every player must be on a team, and every team must have at least one player.
+        # Every player must be on a team, and at least two teams must be occupied.
         unassigned = [p.name for p in game.players.values() if p.team_id is None]
         if unassigned:
             raise ValueError(f"Players without team: {', '.join(unassigned)}")
-        per_team = {tid: 0 for tid in game.teams}
-        for p in game.players.values():
-            per_team[p.team_id] = per_team.get(p.team_id, 0) + 1
-        empty = [game.teams[tid].name for tid, n in per_team.items() if n == 0]
-        if empty:
-            raise ValueError(f"Empty teams: {', '.join(empty)}")
+        if len(_occupied_team_ids(game)) < 2:
+            raise ValueError("Team mode needs at least 2 teams with players")
 
-    lo, hi = game.end_window_seconds
-    duration = secrets.SystemRandom().uniform(lo, hi)
     now = time.time()
     game.phase = Phase.IN_PROGRESS
     game.started_at = now
-    game.scheduled_end_at = now + duration
+    game.scheduled_end_at = now + game.duration_seconds
     return game.scheduled_end_at
 
 
 # --- Player actions -------------------------------------------------------
 
 
-def _credit(game: Game, player_id: str, delta: int) -> tuple[str, int]:
+def _point_multiplier(sequence_aa_length: int) -> float:
+    return round(1 + sequence_aa_length / 10, 1)
+
+
+def _scaled_delta(r: Request, base_delta: int) -> float:
+    return round(base_delta * r.point_multiplier, 1)
+
+
+def _credit(game: Game, player_id: str, delta: float) -> tuple[str, float]:
     """
     Apply a score delta. In team mode the points go to the player's team
     and the returned tuple's first element is the team id (so the web
@@ -353,11 +436,52 @@ def _credit(game: Game, player_id: str, delta: int) -> tuple[str, int]:
         if team_id is None:
             # Should be unreachable after start_game's checks
             raise RuntimeError(f"Player {player_id} has no team in team mode")
-        game.teams[team_id].score += delta
+        game.teams[team_id].score = round(game.teams[team_id].score + delta, 1)
         return (team_id, delta)
     else:
-        game.players[player_id].score += delta
+        game.players[player_id].score = round(game.players[player_id].score + delta, 1)
         return (player_id, delta)
+
+
+def _credit_scaled(
+    game: Game, player_id: str, r: Request, base_delta: int
+) -> tuple[str, float]:
+    return _credit(game, player_id, _scaled_delta(r, base_delta))
+
+
+def _record_credit_scaled(
+    deltas: list[tuple[str, float]],
+    game: Game,
+    player_id: str,
+    r: Request,
+    base_delta: int,
+) -> None:
+    credited_id, delta = _credit_scaled(game, player_id, r, base_delta)
+    for i, (existing_id, existing_delta) in enumerate(deltas):
+        if existing_id == credited_id:
+            deltas[i] = (existing_id, round(existing_delta + delta, 1))
+            return
+    deltas.append((credited_id, delta))
+
+
+def _submitted_decryption_was_correct(r: Request) -> bool:
+    return r.is_dna_valid and bool(r.submitted_peptide_is_correct)
+
+
+def _decrypter_submission_points(r: Request) -> int:
+    if _submitted_decryption_was_correct(r):
+        return POINTS_CORRECT_DECRYPTION
+    return POINTS_WRONG_DECRYPTION
+
+
+def _requester_decision_points(r: Request, confirmed: bool) -> int:
+    if confirmed:
+        if _submitted_decryption_was_correct(r):
+            return POINTS_REQUESTER_GOOD_DECISION
+        return POINTS_REQUESTER_BAD_DECISION
+    if r.is_dna_valid and bool(r.submitted_peptide_is_correct):
+        return POINTS_REQUESTER_BAD_DECISION
+    return POINTS_REQUESTER_GOOD_DECISION
 
 
 def create_request(
@@ -371,60 +495,62 @@ def create_request(
     """
     Log a new outgoing request.
 
-    In SOLO mode, pass `decrypter_id` (an individual).
-    In TEAMS mode, pass `decrypter_team_id` (the target opposing team).
-    Same-team sends are rejected in TEAMS mode.
+    Assignment is random and always excludes the requester (solo mode) or
+    the requester's own team (team mode). Optional decrypter arguments are
+    accepted for backward compatibility but ignored.
     """
     if game.phase != Phase.IN_PROGRESS:
         raise ValueError("Game is not in progress")
     if requester_id not in game.players:
         raise ValueError("Unknown requester")
-    protein_name = protein_name.strip()
-    if not protein_name:
-        raise ValueError("Protein name required")
-    dna_sequence = dna_sequence.strip()
-    if not dna_sequence:
-        raise ValueError("DNA sequence required")
+    protein_name = _clean_text(protein_name, "Protein name", MAX_PROTEIN_NAME_LENGTH)
+    dna_sequence = _clean_dna(dna_sequence)
 
     requester = game.players[requester_id]
     truth = translate_dna(dna_sequence, game.codon_table)
     valid = is_dna_valid(dna_sequence, game.codon_table)
+    aa_length = sequence_amino_acid_length(dna_sequence)
+    point_multiplier = _point_multiplier(aa_length)
 
     if game.mode == Mode.TEAMS:
-        if decrypter_team_id is None:
-            raise ValueError("decrypter_team_id required in team mode")
-        if decrypter_team_id not in game.teams:
-            raise ValueError("Unknown decrypter team")
-        if decrypter_team_id == requester.team_id:
-            raise ValueError("Cannot send to your own team")
+        if requester.team_id is None:
+            raise ValueError("Requester must be assigned to a team")
+        eligible_team_ids = [
+            tid for tid in _occupied_team_ids(game) if tid != requester.team_id
+        ]
+        if not eligible_team_ids:
+            raise ValueError("No opposing team available")
+        assigned_team_id = secrets.choice(eligible_team_ids)
         r = Request(
             id=_new_id("r"),
             requester_id=requester_id,
             decrypter_id=None,
-            decrypter_team_id=decrypter_team_id,
+            decrypter_team_id=assigned_team_id,
             requester_team_id=requester.team_id,
             protein_name=protein_name,
             dna_sequence=dna_sequence,
             correct_peptide=truth,
             is_dna_valid=valid,
+            sequence_aa_length=aa_length,
+            point_multiplier=point_multiplier,
         )
     else:
-        if decrypter_id is None:
-            raise ValueError("decrypter_id required in solo mode")
-        if decrypter_id not in game.players:
-            raise ValueError("Unknown decrypter")
-        if decrypter_id == requester_id:
-            raise ValueError("Cannot send to yourself")
+        eligible_player_ids = [pid for pid in game.players if pid != requester_id]
+        if not eligible_player_ids:
+            raise ValueError("No other player available")
+        assigned_player_id = secrets.choice(eligible_player_ids)
         r = Request(
             id=_new_id("r"),
             requester_id=requester_id,
-            decrypter_id=decrypter_id,
+            decrypter_id=assigned_player_id,
             decrypter_team_id=None,
             requester_team_id=None,
             protein_name=protein_name,
             dna_sequence=dna_sequence,
             correct_peptide=truth,
             is_dna_valid=valid,
+            sequence_aa_length=aa_length,
+            point_multiplier=point_multiplier,
         )
 
     game.requests[r.id] = r
@@ -452,9 +578,7 @@ def submit_decryption(
     _authorize_decrypter(game, r, decrypter_id)
     if r.state != RequestState.AWAITING_DECRYPTION:
         raise ValueError("Request is not awaiting decryption")
-    peptide_guess = peptide_guess.strip()
-    if not peptide_guess:
-        raise ValueError("Empty peptide guess")
+    peptide_guess = _clean_text(peptide_guess, "Peptide guess", MAX_PEPTIDE_LENGTH)
     r.submitted_peptide = peptide_guess
     r.submitted_peptide_is_correct = peptides_match(peptide_guess, r.correct_peptide)
     r.submitted_by_id = decrypter_id
@@ -463,56 +587,107 @@ def submit_decryption(
     return r
 
 
+def flag_invalid_request(
+    game: Game,
+    decrypter_id: str,
+    request_id: str,
+) -> tuple[Request, list[tuple[str, float]]]:
+    """
+    Receiver claims the DNA itself is invalid.
+
+    Correct flags close the request, reward the receiver, and penalize the
+    sender. False flags close the request too, but penalize the receiver.
+    """
+    if game.phase != Phase.IN_PROGRESS:
+        raise ValueError("Game is not in progress")
+    r = game.requests.get(request_id)
+    if r is None:
+        raise ValueError("Unknown request")
+    _authorize_decrypter(game, r, decrypter_id)
+    if r.state != RequestState.AWAITING_DECRYPTION:
+        raise ValueError("Request is not awaiting decryption")
+
+    r.submitted_peptide = "Invalid DNA"
+    r.submitted_peptide_is_correct = not r.is_dna_valid
+    r.submitted_by_id = decrypter_id
+    r.state = RequestState.FLAGGED_INVALID
+    r.decrypted_at = time.time()
+    r.resolved_at = r.decrypted_at
+    r.resolved_by_id = decrypter_id
+
+    deltas: list[tuple[str, float]] = []
+    if r.is_dna_valid:
+        _record_credit_scaled(deltas, game, decrypter_id, r, POINTS_FALSE_INVALID_FLAG)
+    else:
+        _record_credit_scaled(deltas, game, decrypter_id, r, POINTS_INVALID_DNA_CAUGHT)
+        _record_credit_scaled(deltas, game, r.requester_id, r, POINTS_INVALID_DNA_SENT)
+    return r, deltas
+
+
 def confirm_decryption(
     game: Game, requester_id: str, request_id: str
-) -> tuple[Request, list[tuple[str, int]]]:
+) -> tuple[Request, list[tuple[str, float]]]:
     """
     Requester (or teammate in team mode) accepts a decryption.
 
     Scoring:
-      - whoever decrypted always gets +3 (decision honored)
-      - whoever requested gets -2 if their confirm was misguided
-        (wrong submission, or invalid DNA they should've caught)
+      - valid correct peptide: decrypter +3m, requester +1m
+      - wrong peptide or missed invalid DNA: decrypter -3m
+      - bad requester QC: requester -3m
+      - invalid DNA sent: requester -3m in addition to QC
     """
     r = _resolve_pending(game, requester_id, request_id)
     r.state = RequestState.CONFIRMED
     r.resolved_at = time.time()
     r.resolved_by_id = requester_id
-    deltas: list[tuple[str, int]] = []
+    deltas: list[tuple[str, float]] = []
 
-    deltas.append(_credit(game, _decrypter_credit_anchor(game, r), POINTS_CORRECT_CONFIRMED))
-
-    decision_was_correct = r.is_dna_valid and bool(r.submitted_peptide_is_correct)
-    if not decision_was_correct:
-        deltas.append(_credit(game, r.requester_id, POINTS_REQUESTER_BAD_DECISION))
+    _record_credit_scaled(
+        deltas,
+        game,
+        _decrypter_credit_anchor(game, r),
+        r,
+        _decrypter_submission_points(r),
+    )
+    if not r.is_dna_valid:
+        _record_credit_scaled(deltas, game, r.requester_id, r, POINTS_INVALID_DNA_SENT)
+    _record_credit_scaled(
+        deltas, game, r.requester_id, r, _requester_decision_points(r, confirmed=True)
+    )
 
     return r, deltas
 
 
 def reject_decryption(
     game: Game, requester_id: str, request_id: str
-) -> tuple[Request, list[tuple[str, int]]]:
+) -> tuple[Request, list[tuple[str, float]]]:
     """
     Requester (or teammate in team mode) rejects a decryption.
 
     Scoring:
-      - invalid DNA: requester -3, decrypter unaffected
-      - valid DNA: decrypter -3
-      - valid DNA + actually-correct submission: requester also -2
+      - valid correct peptide rejected: decrypter +3m, requester -3m
+      - valid wrong peptide rejected: decrypter -3m, requester +1m
+      - invalid DNA sent: requester -3m
+      - missed invalid DNA submission: decrypter -3m
     """
     r = _resolve_pending(game, requester_id, request_id)
     r.state = RequestState.REJECTED
     r.resolved_at = time.time()
     r.resolved_by_id = requester_id
-    deltas: list[tuple[str, int]] = []
+    deltas: list[tuple[str, float]] = []
 
+    _record_credit_scaled(
+        deltas,
+        game,
+        _decrypter_credit_anchor(game, r),
+        r,
+        _decrypter_submission_points(r),
+    )
     if not r.is_dna_valid:
-        deltas.append(_credit(game, r.requester_id, POINTS_INVALID_DNA_REJECTED))
-        return r, deltas
-
-    deltas.append(_credit(game, _decrypter_credit_anchor(game, r), POINTS_REJECTED))
-    if r.submitted_peptide_is_correct:
-        deltas.append(_credit(game, r.requester_id, POINTS_REQUESTER_BAD_DECISION))
+        _record_credit_scaled(deltas, game, r.requester_id, r, POINTS_INVALID_DNA_SENT)
+    _record_credit_scaled(
+        deltas, game, r.requester_id, r, _requester_decision_points(r, confirmed=False)
+    )
 
     return r, deltas
 
@@ -534,7 +709,12 @@ def _decrypter_credit_anchor(game: Game, r: Request) -> str:
         raise RuntimeError(f"No player on decrypter team for request {r.id}")
     else:
         assert r.decrypter_id is not None
-        return r.decrypter_id
+    return r.decrypter_id
+
+
+def _occupied_team_ids(game: Game) -> set[str]:
+    """Team ids that currently have at least one player."""
+    return {p.team_id for p in game.players.values() if p.team_id is not None}
 
 
 def _authorize_decrypter(game: Game, r: Request, player_id: str) -> None:
@@ -579,7 +759,7 @@ def end_game(game: Game) -> Event:
     and return the final reveal payload.
 
     Sweep rules:
-      - AWAITING_DECRYPTION  -> decrypter -2  (paper left unread)
+      - AWAITING_DECRYPTION  -> decrypter -2  (request left undecrypted)
       - PENDING_APPROVAL     -> decrypter +2  (submission left unjudged)
     """
     if game.phase == Phase.ENDED:
@@ -594,22 +774,51 @@ def end_game(game: Game) -> Event:
             # No one decrypted, so for team mode we charge the team via any teammate.
             anchor = _decrypter_credit_anchor(game, r) if game.mode == Mode.SOLO \
                 else _any_team_member_id(game, r.decrypter_team_id)
-            credited_id, delta = _credit(game, anchor, POINTS_END_AWAITING)
+            credited_id, delta = _credit_scaled(game, anchor, r, POINTS_END_AWAITING)
             sweep.append({
                 "request_id": r.id,
                 "credited_id": credited_id,  # player_id or team_id
                 "delta": delta,
                 "reason": "left_undecrypted",
             })
+            if not r.is_dna_valid:
+                credited_id, delta = _credit_scaled(game, r.requester_id, r, POINTS_INVALID_DNA_SENT)
+                sweep.append({
+                    "request_id": r.id,
+                    "credited_id": credited_id,
+                    "delta": delta,
+                    "reason": "invalid_dna_sent",
+                })
         elif r.state == RequestState.PENDING_APPROVAL:
             anchor = _decrypter_credit_anchor(game, r)
-            credited_id, delta = _credit(game, anchor, POINTS_END_PENDING)
+            base_delta = (
+                POINTS_END_PENDING_CORRECT
+                if _submitted_decryption_was_correct(r)
+                else POINTS_END_PENDING_WRONG
+            )
+            credited_id, delta = _credit_scaled(game, anchor, r, base_delta)
             sweep.append({
                 "request_id": r.id,
                 "credited_id": credited_id,
                 "delta": delta,
-                "reason": "left_unresolved",
+                "reason": "left_unresolved_correct"
+                if base_delta > 0 else "left_unresolved_wrong",
             })
+            credited_id, delta = _credit_scaled(game, r.requester_id, r, POINTS_END_PENDING_REQUESTER)
+            sweep.append({
+                "request_id": r.id,
+                "credited_id": credited_id,
+                "delta": delta,
+                "reason": "left_unresolved_qc",
+            })
+            if not r.is_dna_valid:
+                credited_id, delta = _credit_scaled(game, r.requester_id, r, POINTS_INVALID_DNA_SENT)
+                sweep.append({
+                    "request_id": r.id,
+                    "credited_id": credited_id,
+                    "delta": delta,
+                    "reason": "invalid_dna_sent",
+                })
 
     reveal = _final_reveal(game)
     reveal["sweep"] = sweep
@@ -626,6 +835,7 @@ def _any_team_member_id(game: Game, team_id: str | None) -> str:
 
 def _final_reveal(game: Game) -> Event:
     """End-of-game payload with full truth: scores, all requests, all answers."""
+    occupied_team_ids = _occupied_team_ids(game)
     player_scores = sorted(
         ({"id": p.id, "name": p.name, "score": p.score, "team_id": p.team_id}
          for p in game.players.values()),
@@ -634,7 +844,8 @@ def _final_reveal(game: Game) -> Event:
     )
     team_scores = sorted(
         ({"id": t.id, "name": t.name, "color": t.color, "score": t.score}
-         for t in game.teams.values()),
+         for t in game.teams.values()
+         if not occupied_team_ids or t.id in occupied_team_ids),
         key=lambda x: x["score"],
         reverse=True,
     )
@@ -650,6 +861,8 @@ def _final_reveal(game: Game) -> Event:
             "dna_sequence": r.dna_sequence,
             "correct_peptide": r.correct_peptide,
             "is_dna_valid": r.is_dna_valid,
+            "sequence_aa_length": r.sequence_aa_length,
+            "point_multiplier": r.point_multiplier,
             "submitted_peptide": r.submitted_peptide,
             "submitted_peptide_is_correct": r.submitted_peptide_is_correct,
             "submitted_by_id": r.submitted_by_id,

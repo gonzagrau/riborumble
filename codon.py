@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 
-# Reduced codon table — 10 codons, 7 amino acids + Stop.
+# Reduced codon table — 10 codons, 9 amino acids + Stop.
 # No two codons map to the same amino acid in this subset, so scoring
 # is unambiguous against a canonical answer.
 DEFAULT_CODON_TABLE: dict[str, str] = {
@@ -39,6 +39,36 @@ AA_ALIASES: dict[str, str] = {
     "STOP": "Stop", "*": "Stop", "X": "Stop",
 }
 
+SUPPORTED_AAS = set(AA_ALIASES.values())
+MAX_CODON_TABLE_ENTRIES = 64
+
+
+def normalize_codon_table(codon_table: dict[str, str]) -> dict[str, str]:
+    """
+    Validate and normalize a codon table supplied through the API.
+
+    Codon keys are uppercased after whitespace removal. Amino-acid values may
+    use the same aliases accepted for guesses, but must resolve to this game's
+    supported canonical labels so players can submit matching answers.
+    """
+    if not codon_table:
+        raise ValueError("Codon table required")
+    if len(codon_table) > MAX_CODON_TABLE_ENTRIES:
+        raise ValueError(f"Codon table can contain at most {MAX_CODON_TABLE_ENTRIES} entries")
+
+    normalized: dict[str, str] = {}
+    for raw_codon, raw_aa in codon_table.items():
+        if not isinstance(raw_codon, str) or not isinstance(raw_aa, str):
+            raise ValueError("Codon table entries must be text")
+        codon = normalize_dna(raw_codon)
+        if not re.fullmatch(r"[ATCG]{3}", codon):
+            raise ValueError(f"Invalid codon: {raw_codon}")
+        aa = AA_ALIASES.get(raw_aa.strip().upper())
+        if aa is None or aa not in SUPPORTED_AAS:
+            raise ValueError(f"Unsupported amino acid: {raw_aa}")
+        normalized[codon] = aa
+    return normalized
+
 
 def normalize_dna(dna: str) -> str:
     """Strip whitespace and uppercase. Does NOT validate — invalid DNA is allowed."""
@@ -53,8 +83,8 @@ def is_dna_valid(dna: str, codon_table: dict[str, str]) -> bool:
       - length is a multiple of 3,
       - every triplet exists in the codon table.
 
-    The decrypter never sees this flag. It only governs scoring when
-    the decrypter rejects a request (invalid → requester loses 3).
+    The decrypter never sees this flag. It governs scoring when invalid
+    DNA is rejected or flagged.
     """
     cleaned = normalize_dna(dna)
     if not cleaned:
@@ -83,6 +113,17 @@ def translate_dna(dna: str, codon_table: dict[str, str]) -> str:
         triplet = cleaned[i : i + 3]
         aas.append(codon_table.get(triplet, "?"))
     return "-".join(aas)
+
+
+def sequence_amino_acid_length(dna: str) -> int:
+    """
+    Count complete codon slots in a DNA sequence.
+
+    This intentionally counts unknown triplets too, because invalid long
+    requests should carry the same score stakes as valid long requests.
+    Partial trailing bases do not produce an amino-acid slot.
+    """
+    return len(normalize_dna(dna)) // 3
 
 
 def canonicalize_peptide(peptide: str) -> str:
